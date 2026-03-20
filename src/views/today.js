@@ -3,11 +3,12 @@ import { getTodayJournalEntry } from '../services/journal.js';
 import { touchLastActive, getLastActiveGap } from '../services/lastSeen.js';
 import { getTodayNutritionLog, saveTodayNutritionLog } from '../services/nutrition.js';
 import { getSuggestionsForEnergy } from '../data/nutrition.js';
-import { getWeekSummary } from '../services/progress.js';
 import { getTodayDisplay, showToast } from '../utils.js';
 import { fetchWeather } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
 import { getTodayWorkoutSession } from '../services/workouts.js';
+import { getHabitLog, computeStreaks, HABITS } from '../services/habits.js';
+import { navigateTo } from '../router.js';
 
 // ─── Weather card ─────────────────────────────────────────────────────────────
 
@@ -15,20 +16,6 @@ function uvBadgeClass(uv) {
   if (uv >= 8) return 'weather-uv-badge weather-uv-badge--extreme';
   if (uv >= 4) return 'weather-uv-badge weather-uv-badge--high';
   return 'weather-uv-badge';
-}
-
-function renderWeatherSkeleton() {
-  return `
-    <div class="weather-skeleton" id="weatherCard">
-      <div class="weather-skel-row">
-        <div class="skel-circle"></div>
-        <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
-          <div class="skel-block" style="width:60%;"></div>
-          <div class="skel-block" style="width:40%;"></div>
-        </div>
-      </div>
-    </div>
-  `;
 }
 
 function renderWeatherCard(weather) {
@@ -79,29 +66,13 @@ function renderWeatherCard(weather) {
   `;
 }
 
-// ─── Return message copy ──────────────────────────────────────────────────────
+// ─── Return message ───────────────────────────────────────────────────────────
 
 function getReturnMessage(gapHours) {
   if (gapHours <= 48) return null;
-
-  if (gapHours > 7 * 24) {
-    return {
-      headline: `You've been away for a while.`,
-      sub: `This is your space. Take your time — no catch-up needed.`
-    };
-  }
-
-  if (gapHours > 3 * 24) {
-    return {
-      headline: `It's been a few days.`,
-      sub: `Welcome back. No pressure — just checking in when you're ready.`
-    };
-  }
-
-  return {
-    headline: `Good to see you again.`,
-    sub: `It's been a couple of days. Start wherever feels right.`
-  };
+  if (gapHours > 7 * 24) return { headline: `You've been away for a while.`, sub: `This is your space. Take your time — no catch-up needed.` };
+  if (gapHours > 3 * 24) return { headline: `It's been a few days.`, sub: `Welcome back. No pressure — just checking in when you're ready.` };
+  return { headline: `Good to see you again.`, sub: `It's been a couple of days. Start wherever feels right.` };
 }
 
 // ─── Quick check-in widget ────────────────────────────────────────────────────
@@ -252,7 +223,7 @@ function renderWorkoutTile(savedSession) {
   return `
     <button class="workout-tile" id="workoutTileBtn" aria-label="Go to workouts">
       <div class="workout-tile-left">
-        <p class="workout-tile-eyebrow">Today's workout</p>
+        <p class="workout-tile-eyebrow">Today&#39;s workout</p>
         <p class="workout-tile-label">${split.label}</p>
         <p class="workout-tile-focus">${split.focus}</p>
       </div>
@@ -265,49 +236,44 @@ function renderWorkoutTile(savedSession) {
   `;
 }
 
-// ─── Week summary card ────────────────────────────────────────────────────────
+// ─── Habits entry tile ────────────────────────────────────────────────────────
 
-function renderWeekSummary(summary) {
-  if (!summary) {
-    return `
-      <div class="card week-summary-card" id="weekSummaryCard">
-        <p class="card-label">This week</p>
-        <p class="week-summary-empty">Your week is just beginning.</p>
-      </div>
-    `;
-  }
+function renderHabitsTile(todayHabits) {
+  const doneCount = HABITS.filter(h => todayHabits[h.id] === true).length;
+  const total     = HABITS.length;
+  const allDone   = doneCount === total;
+  const pct       = total > 0 ? Math.round((doneCount / total) * 100) : 0;
 
-  const { workoutsDone, journalDays, avgHydration, nourishedDays, hasAnyData } = summary;
-
-  if (!hasAnyData) {
-    return `
-      <div class="card week-summary-card" id="weekSummaryCard">
-        <p class="card-label">This week</p>
-        <p class="week-summary-empty">Your week is just beginning.</p>
-      </div>
-    `;
-  }
-
-  const stats = [
-    { icon: '🏃', value: workoutsDone, label: workoutsDone === 1 ? 'session' : 'sessions', show: true },
-    { icon: '📓', value: journalDays,  label: journalDays  === 1 ? 'entry'   : 'entries',  show: true },
-    { icon: '💧', value: avgHydration, label: 'avg glasses', show: avgHydration > 0 },
-    { icon: '🌿', value: nourishedDays, label: nourishedDays === 1 ? 'day nourished' : 'days nourished', show: nourishedDays > 0 },
-  ].filter(s => s.show);
+  const previewHabits = HABITS.slice(0, 5);
 
   return `
-    <div class="card week-summary-card" id="weekSummaryCard">
-      <p class="card-label">This week</p>
-      <div class="week-summary-stats">
-        ${stats.map(s => `
-          <div class="week-stat">
-            <span class="week-stat-icon">${s.icon}</span>
-            <span class="week-stat-value">${s.value}</span>
-            <span class="week-stat-label">${s.label}</span>
+    <button class="habits-entry-tile" id="habitsTileBtn" aria-label="Open habits tracker">
+      <div class="habits-tile-top">
+        <div>
+          <p class="habits-tile-eyebrow">Daily habits</p>
+          <p class="habits-tile-count">${doneCount} <span>of ${total}</span></p>
+        </div>
+        <div class="habits-tile-right">
+          <div class="habits-tile-ring" style="--pct: ${pct}">
+            <svg viewBox="0 0 36 36" class="habits-ring-svg">
+              <circle class="habits-ring-bg" cx="18" cy="18" r="14"/>
+              <circle class="habits-ring-fill" cx="18" cy="18" r="14"
+                stroke-dasharray="${pct * 0.879} 100"
+                stroke="${allDone ? '#5a7a5a' : 'var(--color-ink-2)'}"/>
+            </svg>
+            ${allDone ? `<span class="habits-ring-check">✓</span>` : `<span class="habits-ring-pct">${pct}%</span>`}
           </div>
-        `).join('')}
+          <span class="workout-tile-arrow">→</span>
+        </div>
       </div>
-    </div>
+      <div class="habits-tile-preview">
+        ${previewHabits.map(h => {
+          const done = todayHabits[h.id] === true;
+          return `<span class="habits-preview-dot${done ? ' habits-preview-dot--done' : ''}" style="--habit-color:${h.color}" aria-hidden="true">${h.emoji}</span>`;
+        }).join('')}
+        ${total > 5 ? `<span class="habits-preview-more">+${total - 5}</span>` : ''}
+      </div>
+    </button>
   `;
 }
 
@@ -328,7 +294,7 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-function renderView(user, wellness, returnMsg, nutritionLog, weekSummary, weather, savedSession) {
+function renderView(user, wellness, returnMsg, nutritionLog, weather, savedSession, todayHabits) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -343,11 +309,7 @@ function renderView(user, wellness, returnMsg, nutritionLog, weekSummary, weathe
               <p class="page-subtitle">${getTodayDisplay()}</p>
             </div>
             ${user.photoURL ? `
-              <img
-                src="${user.photoURL}"
-                alt="${user.displayName || 'Profile'}"
-                class="avatar"
-              />
+              <img src="${user.photoURL}" alt="${user.displayName || 'Profile'}" class="avatar" />
             ` : ''}
           </div>
         </header>
@@ -360,14 +322,11 @@ function renderView(user, wellness, returnMsg, nutritionLog, weekSummary, weathe
 
         <div class="card-stack">
 
-          <!-- Today's workout tile -->
           ${renderWorkoutTile(savedSession)}
 
-          <!-- Nutrition -->
-          ${renderNutritionCard(wellness.energy || '', nutritionLog)}
+          ${renderHabitsTile(todayHabits)}
 
-          <!-- Week summary -->
-          ${renderWeekSummary(weekSummary)}
+          ${renderNutritionCard(wellness.energy || '', nutritionLog)}
 
           <!-- Hydration -->
           <div class="card">
@@ -402,27 +361,29 @@ export const TodayView = {
   async init(container, user) {
     container.innerHTML = `<div class="loading-state"><p>Loading your dashboard…</p></div>`;
 
-    const [wellness, journal, { gapHours }, nutritionLog, weekSummary, weather, savedSession] = await Promise.all([
+    const { getTodayKey } = await import('../utils.js');
+    const todayKey = getTodayKey();
+
+    const [wellness, , { gapHours }, nutritionLog, weather, savedSession, todayHabits] = await Promise.all([
       getTodayWellnessCheckin(user.uid),
-      getTodayJournalEntry(user.uid),
+      getTodayJournalEntry(user.uid),   // kept for completeness — unused on Today now
       getLastActiveGap(user.uid),
       getTodayNutritionLog(user.uid),
-      getWeekSummary(user.uid),
       fetchWeather().catch(() => null),
-      getTodayWorkoutSession(user.uid).catch(() => null)
+      getTodayWorkoutSession(user.uid).catch(() => null),
+      getHabitLog(user.uid, todayKey).catch(() => ({}))
     ]);
 
-    // Touch lastActiveAt after reading the gap (so the gap reflects the previous session)
     touchLastActive(user.uid);
 
     const returnMsg = _returnDismissed ? null : getReturnMessage(gapHours);
 
-    container.innerHTML = renderView(user, wellness, returnMsg, nutritionLog, weekSummary, weather, savedSession);
+    container.innerHTML = renderView(user, wellness, returnMsg, nutritionLog, weather, savedSession, todayHabits);
 
     // ── State ──
     const wellnessState = {
       hydrationGlasses: wellness.hydrationGlasses || 0,
-      mood: wellness.mood || '',
+      mood:   wellness.mood   || '',
       energy: wellness.energy || ''
     };
 
@@ -444,20 +405,23 @@ export const TodayView = {
       }
     });
 
-    // ── Workout tile tap — navigate to workouts tab ──
+    // ── Workout tile → navigate to workouts ──
     document.getElementById('workoutTileBtn')?.addEventListener('click', () => {
-      const workoutsNav = document.querySelector('[data-route="workouts"]');
-      if (workoutsNav) workoutsNav.click();
+      navigateTo('workouts');
     });
 
-    // ── Quick check-in widget ──
+    // ── Habits tile → navigate to habits ──
+    document.getElementById('habitsTileBtn')?.addEventListener('click', () => {
+      navigateTo('habits');
+    });
+
+    // ── Quick check-in ──
     function rebuildQci() {
       const qci = document.getElementById('quickCheckin');
       if (!qci) return;
       const fresh = document.createElement('div');
       fresh.innerHTML = renderQuickCheckin(wellnessState.mood, wellnessState.energy);
-      const newCard = fresh.firstElementChild;
-      qci.replaceWith(newCard);
+      qci.replaceWith(fresh.firstElementChild);
       bindQci();
     }
 
@@ -483,10 +447,7 @@ export const TodayView = {
             await saveTodayWellnessCheckin(user.uid, wellnessState);
             if (wellnessState.mood && wellnessState.energy) {
               showQciTick();
-              setTimeout(() => {
-                rebuildQci();
-                rebuildNutritionCard();
-              }, 700);
+              setTimeout(() => { rebuildQci(); rebuildNutritionCard(); }, 700);
             }
           } catch {
             showToast('Save failed — try again', 'error');
@@ -499,8 +460,7 @@ export const TodayView = {
         if (!qci) return;
         const fresh = document.createElement('div');
         fresh.innerHTML = renderQuickCheckin('', '');
-        const newCard = fresh.firstElementChild;
-        qci.replaceWith(newCard);
+        qci.replaceWith(fresh.firstElementChild);
         bindQci();
       });
     }
@@ -513,61 +473,45 @@ export const TodayView = {
       if (!card) return;
       const fresh = document.createElement('div');
       fresh.innerHTML = renderNutritionCard(wellnessState.energy, nutritionState);
-      const newCard = fresh.firstElementChild;
-      card.replaceWith(newCard);
+      card.replaceWith(fresh.firstElementChild);
       bindNutrition();
     }
 
     function bindNutrition() {
-      const toggleBtn   = document.getElementById('nourishedToggleBtn');
-      const noteInput   = document.getElementById('nutritionNoteInput');
-
+      const toggleBtn = document.getElementById('nourishedToggleBtn');
+      const noteInput = document.getElementById('nutritionNoteInput');
       if (!toggleBtn || !noteInput) return;
 
       toggleBtn.addEventListener('click', async () => {
         nutritionState.nourished = !nutritionState.nourished;
-
         toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
         toggleBtn.setAttribute('aria-pressed', nutritionState.nourished);
-        toggleBtn.textContent = nutritionState.nourished
-          ? '✓ Nourished well today'
-          : 'I nourished well today';
+        toggleBtn.textContent = nutritionState.nourished ? '✓ Nourished well today' : 'I nourished well today';
 
         try {
           await saveTodayNutritionLog(user.uid, { nourished: nutritionState.nourished });
-          if (nutritionState.nourished) {
-            showToast('Noted — well done 🌿', 'success', 1800);
-          }
+          if (nutritionState.nourished) showToast('Noted — well done 🌿', 'success', 1800);
         } catch {
           nutritionState.nourished = !nutritionState.nourished;
           toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
           toggleBtn.setAttribute('aria-pressed', nutritionState.nourished);
-          toggleBtn.textContent = nutritionState.nourished
-            ? '✓ Nourished well today'
-            : 'I nourished well today';
+          toggleBtn.textContent = nutritionState.nourished ? '✓ Nourished well today' : 'I nourished well today';
           showToast('Save failed — try again', 'error');
         }
       });
 
       let _noteDebounce = null;
-
       noteInput.addEventListener('input', () => {
         nutritionState.note = noteInput.value;
         clearTimeout(_noteDebounce);
         _noteDebounce = setTimeout(async () => {
-          try {
-            await saveTodayNutritionLog(user.uid, { note: nutritionState.note });
-          } catch {
-            showToast('Note save failed — try again', 'error');
-          }
+          try { await saveTodayNutritionLog(user.uid, { note: nutritionState.note }); }
+          catch { showToast('Note save failed — try again', 'error'); }
         }, 800);
       });
 
       noteInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          noteInput.blur();
-        }
+        if (e.key === 'Enter') { e.preventDefault(); noteInput.blur(); }
       });
     }
 
@@ -599,5 +543,4 @@ export const TodayView = {
   }
 };
 
-// Session-level dismiss flag — lives in module scope (reset on full page reload)
 let _returnDismissed = false;

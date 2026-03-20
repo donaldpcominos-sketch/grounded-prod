@@ -8,15 +8,17 @@ import { WorkoutsView } from './views/workouts.js';
 import { ShoppingView } from './views/shopping.js';
 import { ProfileView } from './views/profile.js';
 import { NicoView } from './views/nico.js';
+import { HabitsView } from './views/habits.js';
 import { showOnboardingIfNeeded } from './views/onboarding.js';
 import { db } from './lib/firebase.js';
 import { doc, getDoc } from 'firebase/firestore';
 
-registerRoute('today', TodayView);
+registerRoute('today',    TodayView);
 registerRoute('workouts', WorkoutsView);
 registerRoute('shopping', ShoppingView);
-registerRoute('nico', NicoView);
-registerRoute('profile', ProfileView);
+registerRoute('nico',     NicoView);
+registerRoute('profile',  ProfileView);
+registerRoute('habits',   HabitsView);
 
 // ─── PWA: register service worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
@@ -27,8 +29,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-// ─── PWA: capture beforeinstallprompt for use in onboarding ──────────────────
-// We store the deferred prompt on window so onboarding.js can access it.
+// ─── PWA: capture beforeinstallprompt ────────────────────────────────────────
 window.__pwaInstallPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
@@ -69,7 +70,6 @@ onAuthChange(async (user) => {
       setUser(user);
       navigateTo('today');
 
-      // Show onboarding overlay if first launch
       const snap = await getDoc(doc(db, 'users', user.uid));
       const data = snap.exists() ? snap.data() : {};
       if (!data.onboarded) {
