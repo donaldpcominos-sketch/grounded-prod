@@ -1,11 +1,13 @@
 import { getTodayWellnessCheckin, saveTodayWellnessCheckin } from '../services/wellness.js';
-import { getTodayJournalEntry, saveTodayJournalEntry, getRecentJournalEntries } from '../services/journal.js';
+import { getTodayJournalEntry } from '../services/journal.js';
 import { touchLastActive, getLastActiveGap } from '../services/lastSeen.js';
 import { getTodayNutritionLog, saveTodayNutritionLog } from '../services/nutrition.js';
 import { getSuggestionsForEnergy } from '../data/nutrition.js';
 import { getWeekSummary } from '../services/progress.js';
-import { getTodayDisplay, truncateText, showToast } from '../utils.js';
+import { getTodayDisplay, showToast } from '../utils.js';
 import { fetchWeather } from '../services/weather.js';
+import { WEEKLY_SPLIT } from '../data/workouts.js';
+import { getTodayWorkoutSession } from '../services/workouts.js';
 
 // ─── Weather card ─────────────────────────────────────────────────────────────
 
@@ -96,7 +98,6 @@ function getReturnMessage(gapHours) {
     };
   }
 
-  // > 48 hours
   return {
     headline: `Good to see you again.`,
     sub: `It's been a couple of days. Start wherever feels right.`
@@ -223,28 +224,45 @@ function renderNutritionCard(energy, nutritionLog) {
   `;
 }
 
-// ─── Option button helpers ────────────────────────────────────────────────────
+// ─── Today's workout tile ─────────────────────────────────────────────────────
 
-function getOptionClass(isSelected) {
-  return isSelected ? 'option-btn option-btn--selected' : 'option-btn';
+function getTypeTag(type) {
+  return { lower: 'Glutes', upper: 'Upper', full: 'Full Body', 'cardio-core': 'Cardio', recovery: 'Mobility' }[type] || type;
 }
 
-function buildOptionButtons(options, selectedValue, groupName) {
-  return options.map(({ value, label }) => `
-    <button
-      type="button"
-      data-group="${groupName}"
-      data-value="${value}"
-      class="${getOptionClass(value === selectedValue)}"
-    >${label}</button>
-  `).join('');
+function getTypeColor(type) {
+  return { lower: 'tag--warm', upper: 'tag--cool', full: 'tag--neutral', 'cardio-core': 'tag--green', recovery: 'tag--soft' }[type] || 'tag--neutral';
 }
 
-function updateSelectedButtons(groupName, selectedValue) {
-  document.querySelectorAll(`[data-group="${groupName}"]`).forEach(btn => {
-    const selected = btn.dataset.value === selectedValue;
-    btn.className = getOptionClass(selected);
-  });
+function renderWorkoutTile(savedSession) {
+  const today = new Date().getDay();
+  const split = WEEKLY_SPLIT[today];
+  if (!split) return '';
+
+  const isDone = savedSession?.status === 'complete';
+  const isAlternate = savedSession?.type === 'alternate';
+
+  let statusLine = '';
+  if (isDone && isAlternate) {
+    statusLine = `<span class="workout-tile-done workout-tile-done--alt">✓ ${savedSession.alternateLabel || 'Activity'} done</span>`;
+  } else if (isDone) {
+    statusLine = `<span class="workout-tile-done">✓ Done today</span>`;
+  }
+
+  return `
+    <button class="workout-tile" id="workoutTileBtn" aria-label="Go to workouts">
+      <div class="workout-tile-left">
+        <p class="workout-tile-eyebrow">Today's workout</p>
+        <p class="workout-tile-label">${split.label}</p>
+        <p class="workout-tile-focus">${split.focus}</p>
+      </div>
+      <div class="workout-tile-right">
+        <span class="tag ${getTypeColor(split.type)}">${getTypeTag(split.type)}</span>
+        ${statusLine}
+        <span class="workout-tile-arrow">→</span>
+      </div>
+    </button>
+  `;
 }
 
 // ─── Week summary card ────────────────────────────────────────────────────────
@@ -310,24 +328,7 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-function renderJournalHistory(entries) {
-  if (!entries.length) {
-    return `
-      <div class="history-empty">
-        <p>Your reflections will live here. Write your first entry above.</p>
-      </div>
-    `;
-  }
-
-  return entries.map(item => `
-    <div class="history-card">
-      <p class="history-date">${item.date}</p>
-      <p class="history-text">${truncateText(item.entry || 'No entry saved yet.')}</p>
-    </div>
-  `).join('');
-}
-
-function renderView(user, wellness, journal, recentEntries, returnMsg, nutritionLog, weekSummary, weather) {
+function renderView(user, wellness, returnMsg, nutritionLog, weekSummary, weather, savedSession) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -359,12 +360,21 @@ function renderView(user, wellness, journal, recentEntries, returnMsg, nutrition
 
         <div class="card-stack">
 
+          <!-- Today's workout tile -->
+          ${renderWorkoutTile(savedSession)}
+
+          <!-- Nutrition -->
+          ${renderNutritionCard(wellness.energy || '', nutritionLog)}
+
+          <!-- Week summary -->
+          ${renderWeekSummary(weekSummary)}
+
           <!-- Hydration -->
           <div class="card">
             <div class="card-row">
               <div>
                 <p class="card-label">Hydration</p>
-                <p class="card-body">Track glasses of water today.</p>
+                <p class="card-body">Glasses of water today.</p>
               </div>
               <div class="stat-block">
                 <p id="hydrationCount" class="stat-number">${wellness.hydrationGlasses || 0}</p>
@@ -376,49 +386,6 @@ function renderView(user, wellness, journal, recentEntries, returnMsg, nutrition
               <button id="increaseHydrationBtn" class="btn-primary flex-1">+ Add glass</button>
             </div>
           </div>
-
-          <!-- Nutrition -->
-          ${renderNutritionCard(wellness.energy || '', nutritionLog)}
-
-          <!-- Journal -->
-          <div class="card">
-            <div class="card-row">
-              <div>
-                <p class="card-label">Morning Ritual</p>
-                <p class="card-body mt-1">A quiet space to reflect and reset.</p>
-              </div>
-              <span class="badge">Journal</span>
-            </div>
-
-            <div class="prompt-block mt-4">
-              <p class="prompt-eyebrow">Today's prompt</p>
-              <p id="journalPrompt" class="prompt-text">${journal.prompt}</p>
-            </div>
-
-            <textarea
-              id="journalEntry"
-              rows="6"
-              placeholder="Write whatever is on your mind..."
-              class="textarea mt-4"
-            >${journal.entry || ''}</textarea>
-
-            <div class="btn-row mt-4">
-              <button id="saveJournalBtn" class="btn-primary flex-1">Save entry</button>
-            </div>
-            <p id="journalStatus" class="status-text mt-3"></p>
-          </div>
-
-          <!-- Journal history -->
-          <div class="card">
-            <p class="card-label">Recent entries</p>
-            <p class="card-body mt-1">A simple history of your reflections.</p>
-            <div id="journalHistory" class="history-list mt-4">
-              ${renderJournalHistory(recentEntries)}
-            </div>
-          </div>
-
-          <!-- Week summary -->
-          ${renderWeekSummary(weekSummary)}
 
         </div>
 
@@ -435,24 +402,22 @@ export const TodayView = {
   async init(container, user) {
     container.innerHTML = `<div class="loading-state"><p>Loading your dashboard…</p></div>`;
 
-    // Run data fetches and last-seen tracking in parallel
-    const [wellness, journal, recentEntries, { gapHours }, nutritionLog, weekSummary, weather] = await Promise.all([
+    const [wellness, journal, { gapHours }, nutritionLog, weekSummary, weather, savedSession] = await Promise.all([
       getTodayWellnessCheckin(user.uid),
       getTodayJournalEntry(user.uid),
-      getRecentJournalEntries(user.uid),
       getLastActiveGap(user.uid),
       getTodayNutritionLog(user.uid),
       getWeekSummary(user.uid),
-      fetchWeather().catch(() => null)
+      fetchWeather().catch(() => null),
+      getTodayWorkoutSession(user.uid).catch(() => null)
     ]);
 
-    // Touch lastActiveAt after reading the gap (so the gap reflects the *previous* session)
+    // Touch lastActiveAt after reading the gap (so the gap reflects the previous session)
     touchLastActive(user.uid);
 
-    // Determine return message (session-level dismiss stored in memory)
     const returnMsg = _returnDismissed ? null : getReturnMessage(gapHours);
 
-    container.innerHTML = renderView(user, wellness, journal, recentEntries, returnMsg, nutritionLog, weekSummary, weather);
+    container.innerHTML = renderView(user, wellness, returnMsg, nutritionLog, weekSummary, weather, savedSession);
 
     // ── State ──
     const wellnessState = {
@@ -461,7 +426,6 @@ export const TodayView = {
       energy: wellness.energy || ''
     };
 
-    // Nutrition state — local mirror of Firestore doc
     const nutritionState = {
       nourished: nutritionLog.nourished || false,
       note:      nutritionLog.note      || ''
@@ -469,9 +433,6 @@ export const TodayView = {
 
     const hydrationCountEl = document.getElementById('hydrationCount');
     const wellnessStatusEl = document.getElementById('wellnessStatus');
-    const journalStatusEl  = document.getElementById('journalStatus');
-    const journalEntryEl   = document.getElementById('journalEntry');
-    const journalPromptEl  = document.getElementById('journalPrompt');
 
     // ── Return card dismiss ──
     document.getElementById('returnCardDismiss')?.addEventListener('click', () => {
@@ -481,6 +442,12 @@ export const TodayView = {
         card.classList.add('return-card--dismissing');
         setTimeout(() => card.remove(), 350);
       }
+    });
+
+    // ── Workout tile tap — navigate to workouts tab ──
+    document.getElementById('workoutTileBtn')?.addEventListener('click', () => {
+      const workoutsNav = document.querySelector('[data-route="workouts"]');
+      if (workoutsNav) workoutsNav.click();
     });
 
     // ── Quick check-in widget ──
@@ -508,7 +475,6 @@ export const TodayView = {
           const val   = btn.dataset.value;
           wellnessState[group] = val;
 
-          // Optimistically update pill selection
           document.querySelectorAll(`[data-qci-group="${group}"]`).forEach(b => {
             b.classList.toggle('qci-pill--selected', b.dataset.value === val);
           });
@@ -519,7 +485,6 @@ export const TodayView = {
               showQciTick();
               setTimeout(() => {
                 rebuildQci();
-                // Refresh nutrition suggestions when energy changes
                 rebuildNutritionCard();
               }, 700);
             }
@@ -562,7 +527,6 @@ export const TodayView = {
       toggleBtn.addEventListener('click', async () => {
         nutritionState.nourished = !nutritionState.nourished;
 
-        // Optimistic UI
         toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
         toggleBtn.setAttribute('aria-pressed', nutritionState.nourished);
         toggleBtn.textContent = nutritionState.nourished
@@ -575,7 +539,6 @@ export const TodayView = {
             showToast('Noted — well done 🌿', 'success', 1800);
           }
         } catch {
-          // Rollback optimistic update
           nutritionState.nourished = !nutritionState.nourished;
           toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
           toggleBtn.setAttribute('aria-pressed', nutritionState.nourished);
@@ -586,7 +549,6 @@ export const TodayView = {
         }
       });
 
-      // Save note on blur (or Enter key)
       let _noteDebounce = null;
 
       noteInput.addEventListener('input', () => {
@@ -616,7 +578,7 @@ export const TodayView = {
       try {
         await saveTodayWellnessCheckin(user.uid, wellnessState);
         showToast('Saved', 'success', 1600);
-      } catch (err) {
+      } catch {
         showToast('Save failed — tap to retry', 'error');
         wellnessStatusEl.textContent = '';
       }
@@ -633,34 +595,6 @@ export const TodayView = {
       wellnessState.hydrationGlasses = Math.max(0, wellnessState.hydrationGlasses - 1);
       hydrationCountEl.textContent = wellnessState.hydrationGlasses;
       await persistWellness();
-    });
-
-    // ── Journal ──
-    document.getElementById('saveJournalBtn').addEventListener('click', async () => {
-      try {
-        journalStatusEl.textContent = 'Saving…';
-        await saveTodayJournalEntry(user.uid, {
-          prompt: journalPromptEl.textContent.trim(),
-          entry: journalEntryEl.value.trim()
-        });
-        journalStatusEl.textContent = '';
-        showToast('Journal saved', 'success', 1800);
-      } catch (err) {
-        journalStatusEl.innerHTML = `Save failed. <button class="retry-inline-btn" id="retryJournalBtn">Retry</button>`;
-        document.getElementById('retryJournalBtn')?.addEventListener('click', async () => {
-          journalStatusEl.textContent = 'Retrying…';
-          try {
-            await saveTodayJournalEntry(user.uid, {
-              prompt: journalPromptEl.textContent.trim(),
-              entry: journalEntryEl.value.trim()
-            });
-            journalStatusEl.textContent = '';
-            showToast('Journal saved', 'success', 1800);
-          } catch {
-            journalStatusEl.textContent = 'Still offline. Entry preserved.';
-          }
-        });
-      }
     });
   }
 };
