@@ -176,7 +176,7 @@ function render() {
 
         <!-- Stats -->
         <section class="card mt-3">
-          <p class="card-label">Your progress</p>
+          <p class="card-label">Workout progress</p>
           <div class="profile-stats mt-3">
             <div class="profile-stat">
               <p class="profile-stat-value">${completedCount}</p>
@@ -185,7 +185,7 @@ function render() {
             <div class="complete-stat-divider"></div>
             <div class="profile-stat">
               <p class="profile-stat-value">${streak > 0 ? streak + ' \uD83D\uDD25' : '\u2014'}</p>
-              <p class="profile-stat-label">Current streak</p>
+              <p class="profile-stat-label">Workout streak</p>
             </div>
             <div class="complete-stat-divider"></div>
             <div class="profile-stat">

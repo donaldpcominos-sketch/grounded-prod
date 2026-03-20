@@ -371,7 +371,10 @@ function renderView() {
   const { filter, naps, completedActivities, nicoAgeMonths } = state;
   const activities = getFilteredActivities();
   const activeNap = naps.find(n => !n.end);
-  const completedNaps = naps.filter(n => n.end);
+  const completedNaps = naps.filter(n => n.end).sort((a, b) => {
+    const toMins = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    return toMins(a.start) - toMins(b.start);
+  });
   const totalMins = totalNapMinutes(naps);
   const ageLabel = getAgeLabel(nicoAgeMonths);
 

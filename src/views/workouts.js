@@ -59,6 +59,10 @@ function getIntensityDots(intensity) {
   ).join('');
 }
 
+function getRestTime(intensity) {
+  return { low: '90s', medium: '60s', high: '45s' }[intensity] || '60s';
+}
+
 function getSubstituteOptions(exercise) {
   const today = getTodayDayOfWeek();
   const split = WEEKLY_SPLIT[today];
@@ -514,6 +518,12 @@ function renderSession() {
               <div class="ex-stat"><p class="ex-stat-val">${ex.reps}</p><p class="ex-stat-lbl">reps</p></div>
               <div class="ex-stat-div"></div>
               <div class="ex-stat"><p class="ex-stat-val">${ex.tempo}</p><p class="ex-stat-lbl">tempo</p></div>
+              <div class="ex-stat-div"></div>
+              <div class="ex-stat"><p class="ex-stat-val">${getRestTime(ex.intensity)}</p><p class="ex-stat-lbl">rest</p></div>
+            </div>
+            <div class="ex-intensity-row mt-3">
+              <span class="ex-intensity-label">Intensity</span>
+              <div class="intensity-dots">${getIntensityDots(ex.intensity)}</div>
             </div>
             <div class="ex-cue mt-4"><p class="cue-text">${ex.cue}</p></div>
             ${isDone ? '<div class="ex-done-pill mt-4">\u2713 Complete</div>' : ''}
@@ -581,9 +591,18 @@ function renderSubstituteOverlay(ex) {
         ` : `
           <div class="overlay-options mt-4">
             ${options.map(opt => `
-              <button class="overlay-opt" data-sub-id="${opt.id}">
-                <p class="overlay-opt-title">${opt.name}</p>
-                <p class="overlay-opt-desc">${opt.muscle} &middot; ${opt.sets} sets &times; ${opt.reps}</p>
+              <button class="overlay-opt overlay-opt--sub" data-sub-id="${opt.id}">
+                <div class="overlay-sub-top">
+                  <p class="overlay-opt-title">${opt.name}</p>
+                  <div class="intensity-dots">${getIntensityDots(opt.intensity)}</div>
+                </div>
+                <div class="overlay-sub-meta mt-1">
+                  <span class="overlay-sub-detail">${opt.muscle}</span>
+                  <span class="overlay-sub-dot">&middot;</span>
+                  <span class="overlay-sub-detail">${opt.sets} &times; ${opt.reps}</span>
+                  <span class="overlay-sub-dot">&middot;</span>
+                  <span class="overlay-sub-detail">${opt.equipment}</span>
+                </div>
               </button>
             `).join('')}
           </div>

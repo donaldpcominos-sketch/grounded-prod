@@ -1064,6 +1064,51 @@ body {
   padding: 12px 14px;
 }
 
+/* Intensity row on exercise card */
+.ex-intensity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ex-intensity-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-ink-4);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Substitute overlay enriched options */
+.overlay-opt--sub {
+  text-align: left;
+}
+
+.overlay-sub-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.overlay-sub-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.overlay-sub-detail {
+  font-size: 12px;
+  color: var(--color-ink-4);
+}
+
+.overlay-sub-dot {
+  font-size: 12px;
+  color: var(--color-ink-4);
+  opacity: 0.5;
+}
+
 /* Done / skip pills */
 .ex-done-pill {
   display: inline-flex;
