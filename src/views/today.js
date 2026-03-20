@@ -5,6 +5,77 @@ import { getTodayNutritionLog, saveTodayNutritionLog } from '../services/nutriti
 import { getSuggestionsForEnergy } from '../data/nutrition.js';
 import { getWeekSummary } from '../services/progress.js';
 import { getTodayDisplay, truncateText, showToast } from '../utils.js';
+import { fetchWeather } from '../services/weather.js';
+
+// ─── Weather card ─────────────────────────────────────────────────────────────
+
+function uvBadgeClass(uv) {
+  if (uv >= 8) return 'weather-uv-badge weather-uv-badge--extreme';
+  if (uv >= 4) return 'weather-uv-badge weather-uv-badge--high';
+  return 'weather-uv-badge';
+}
+
+function renderWeatherSkeleton() {
+  return `
+    <div class="weather-skeleton" id="weatherCard">
+      <div class="weather-skel-row">
+        <div class="skel-circle"></div>
+        <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+          <div class="skel-block" style="width:60%;"></div>
+          <div class="skel-block" style="width:40%;"></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderWeatherCard(weather) {
+  if (!weather) {
+    return `
+      <div class="weather-card" id="weatherCard">
+        <p class="card-label">Weather</p>
+        <p class="card-body mt-1" style="color:var(--color-ink-4);">Unavailable — check your connection.</p>
+      </div>
+    `;
+  }
+
+  const { currentTemp, currentEmoji, currentDesc, currentUv, forecast, walkWindow, fromCache, cacheAgeMs } = weather;
+
+  const staleNote = fromCache
+    ? `<p class="weather-stale-note">Offline — last updated ${Math.round(cacheAgeMs / 60000)} min ago</p>`
+    : '';
+
+  const forecastHtml = (forecast || []).map(d => `
+    <div class="weather-forecast-day">
+      <p class="forecast-label">${d.label}</p>
+      <p class="forecast-emoji">${d.emoji}</p>
+      <p class="forecast-temps">${d.high}&deg; <span>${d.low}&deg;</span></p>
+    </div>
+  `).join('');
+
+  return `
+    <div class="weather-card" id="weatherCard">
+      <div class="weather-main">
+        <div class="weather-current">
+          <span class="weather-emoji">${currentEmoji}</span>
+          <div class="weather-temp-block">
+            <p class="weather-temp">${currentTemp}&deg;</p>
+            <p class="weather-desc">${currentDesc}</p>
+          </div>
+        </div>
+        <span class="${uvBadgeClass(currentUv)}">UV ${currentUv}</span>
+      </div>
+
+      ${walkWindow ? `<div class="weather-walk-window">${walkWindow}</div>` : ''}
+
+      <div class="weather-forecast">
+        ${forecastHtml}
+      </div>
+
+      ${staleNote}
+    </div>
+  `;
+}
 
 // ─── Return message copy ──────────────────────────────────────────────────────
 
@@ -256,7 +327,7 @@ function renderJournalHistory(entries) {
   `).join('');
 }
 
-function renderView(user, wellness, journal, recentEntries, returnMsg, nutritionLog, weekSummary) {
+function renderView(user, wellness, journal, recentEntries, returnMsg, nutritionLog, weekSummary, weather) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -281,6 +352,8 @@ function renderView(user, wellness, journal, recentEntries, returnMsg, nutrition
         </header>
 
         ${renderReturnCard(returnMsg)}
+
+        ${renderWeatherCard(weather)}
 
         ${renderQuickCheckin(wellness.mood || '', wellness.energy || '')}
 
@@ -369,13 +442,14 @@ export const TodayView = {
     container.innerHTML = `<div class="loading-state"><p>Loading your dashboard…</p></div>`;
 
     // Run data fetches and last-seen tracking in parallel
-    const [wellness, journal, recentEntries, { gapHours }, nutritionLog, weekSummary] = await Promise.all([
+    const [wellness, journal, recentEntries, { gapHours }, nutritionLog, weekSummary, weather] = await Promise.all([
       getTodayWellnessCheckin(user.uid),
       getTodayJournalEntry(user.uid),
       getRecentJournalEntries(user.uid),
       getLastActiveGap(user.uid),
       getTodayNutritionLog(user.uid),
-      getWeekSummary(user.uid)
+      getWeekSummary(user.uid),
+      fetchWeather().catch(() => null)
     ]);
 
     // Touch lastActiveAt after reading the gap (so the gap reflects the *previous* session)
@@ -384,7 +458,7 @@ export const TodayView = {
     // Determine return message (session-level dismiss stored in memory)
     const returnMsg = _returnDismissed ? null : getReturnMessage(gapHours);
 
-    container.innerHTML = renderView(user, wellness, journal, recentEntries, returnMsg, nutritionLog, weekSummary);
+    container.innerHTML = renderView(user, wellness, journal, recentEntries, returnMsg, nutritionLog, weekSummary, weather);
 
     // ── State ──
     const wellnessState = {
