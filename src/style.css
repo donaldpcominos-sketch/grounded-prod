@@ -3382,3 +3382,209 @@ body {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.45; }
 }
+
+/* ─── Shopping list ──────────────────────────────────────────────────────────── */
+
+.shopping-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.shopping-input {
+  flex: 1;
+  padding: 11px 14px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: var(--color-ink);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.shopping-input:focus {
+  border-color: var(--color-ink-3);
+  background: var(--color-surface);
+}
+
+.shopping-add-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border: none;
+  font-size: 22px;
+  font-weight: 300;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.15s ease;
+}
+
+.shopping-add-btn:active { opacity: 0.75; }
+
+.shopping-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shopping-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--color-border-soft);
+  transition: opacity 0.2s ease;
+}
+
+.shopping-item:last-child { border-bottom: none; }
+
+.shopping-item--ticked {
+  opacity: 0.45;
+}
+
+.shopping-item--ticked .shopping-item-text {
+  text-decoration: line-through;
+}
+
+.shopping-tick-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.shopping-tick-circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-ink-3);
+  background: var(--color-surface);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.shopping-item--ticked .shopping-tick-circle {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.shopping-item-text {
+  flex: 1;
+  font-size: 15px;
+  color: var(--color-ink);
+  line-height: 1.4;
+}
+
+.shopping-delete-btn {
+  background: none;
+  border: none;
+  color: var(--color-ink-4);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: color 0.15s ease, background 0.15s ease;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.shopping-item:hover .shopping-delete-btn,
+.shopping-item:focus-within .shopping-delete-btn {
+  opacity: 1;
+}
+
+/* Always show delete on touch devices */
+@media (hover: none) {
+  .shopping-delete-btn { opacity: 1; }
+}
+
+.shopping-clear-btn {
+  background: none;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-btn);
+  padding: 9px 16px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--color-ink-3);
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.shopping-clear-btn:active {
+  background: var(--color-surface-2);
+}
+
+.shopping-empty {
+  font-size: 14px;
+  color: var(--color-ink-4);
+  font-style: italic;
+  padding: 8px 0;
+}
+
+/* Shared panel */
+
+.shopping-shared-panel {}
+
+.shopping-shared-panel--unlinked {}
+
+.shopping-shared-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.shopping-shared-code {
+  font-size: 13px;
+  color: var(--color-ink-3);
+  margin-top: 3px;
+}
+
+.shopping-shared-code strong {
+  font-family: var(--font-sans);
+  letter-spacing: 0.08em;
+  color: var(--color-ink-2);
+}
+
+.shopping-leave-btn {
+  background: none;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--color-ink-3);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.shopping-leave-btn:active { background: var(--color-surface-2); }
+
+.shopping-join-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.shopping-join-hint {
+  font-size: 12px;
+  color: var(--color-ink-4);
+  font-style: italic;
+}

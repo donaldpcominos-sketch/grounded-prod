@@ -357,12 +357,6 @@ function renderView(user, wellness, journal, recentEntries, returnMsg, nutrition
 
         ${renderQuickCheckin(wellness.mood || '', wellness.energy || '')}
 
-        <section class="card card--hero">
-          <p class="card-label">Today</p>
-          <h2 class="card-title">Your wellness dashboard</h2>
-          <p class="card-body">A simple check-in to support your day.</p>
-        </section>
-
         <div class="card-stack">
 
           <!-- Hydration -->

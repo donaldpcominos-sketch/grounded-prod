@@ -5,7 +5,7 @@ import { renderShell, renderAuthScreen } from './shell.js';
 import { registerRoute, setViewContainer, setUser, navigateTo } from './router.js';
 import { TodayView } from './views/today.js';
 import { WorkoutsView } from './views/workouts.js';
-import { JournalView } from './views/journal.js';
+import { ShoppingView } from './views/shopping.js';
 import { ProfileView } from './views/profile.js';
 import { NicoView } from './views/nico.js';
 import { showOnboardingIfNeeded } from './views/onboarding.js';
@@ -14,7 +14,7 @@ import { doc, getDoc } from 'firebase/firestore';
 
 registerRoute('today', TodayView);
 registerRoute('workouts', WorkoutsView);
-registerRoute('journal', JournalView);
+registerRoute('shopping', ShoppingView);
 registerRoute('nico', NicoView);
 registerRoute('profile', ProfileView);
 
