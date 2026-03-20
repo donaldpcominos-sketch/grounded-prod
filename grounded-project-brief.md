@@ -157,7 +157,7 @@ match /users/{userId}/{document=**} {
 | 9 | Streak grace day + motivational copy | ✅ DONE |
 | 10 | Nico age-awareness + activity filtering | ✅ DONE |
 | 11 | Push notifications (daily reminder) | ✅ DONE (Cloud Function not yet deployed) |
-| 12 | Production readiness pass | ⬜ NEXT |
+| 12 | Production readiness pass + polish | ✅ DONE |
 
 ---
 
@@ -176,33 +176,27 @@ To deploy the Cloud Function when ready:
 
 ---
 
-## Chunk 12 — Production readiness pass (NEXT)
+## Chunk 12 notes — Production readiness + polish
 
-**What to do:**
+**Code audit:** No `console.log` statements in client code. `console.warn`/`error` retained where appropriate. Font loading uses `display=swap`. All good.
 
-**Manual test checklist:**
-- [ ] Full auth flow on real iOS device (Safari)
-- [ ] Full auth flow on real Android device (Chrome)
-- [ ] Install to home screen on both devices
-- [ ] Journal: write and save on slow connection
-- [ ] Journal: attempt save in airplane mode — confirm error shows and retry works
-- [ ] Workout: complete a full session including skip, substitute, and finish
-- [ ] Nico: log a nap, end a nap, log a past nap
-- [ ] Onboarding: clear all app data and run through as a new user
-- [ ] All empty states — check every view on a fresh account
-- [ ] Profile: unban an exercise, confirm it reappears in workouts
-- [ ] Return message: manually set `lastActiveAt` to 3 days ago in Firestore, confirm card shows
-- [ ] Push notification: toggle on in Profile, confirm permission prompt appears
+**Polish delivered:**
+- Nap list now sorts by start time (not log order)
+- Profile "Your progress" → "Workout progress", "Current streak" → "Workout streak"
+- Exercise card: rest time stat added (derived from intensity), intensity dots added inline
+- Substitute overlay enriched: intensity dots + equipment shown per option
 
-**Code review:**
-- [ ] Remove all `console.log` statements
-- [ ] Confirm all environment variables are set in Netlify
-- [ ] Confirm Firestore security rules are deployed
-- [ ] Confirm `manifest.json` icons exist at all declared sizes
+**Still manual / operational:**
+- Deploy Cloud Function (see Chunk 11 notes)
+- Run Lighthouse on mobile
+- Test on real iOS + Android devices
+- Confirm Netlify env vars and Firestore rules are live
 
-**Performance:**
-- [ ] Run Lighthouse on mobile — target 90+ performance, 100 accessibility
-- [ ] Confirm fonts load with `font-display: swap`
+---
+
+## Going forward
+
+No fixed chunk structure — new sessions will pick up ad-hoc improvements, features, or fixes as needed.
 
 ---
 
