@@ -1,4 +1,4 @@
-import { HABITS, getHabitLog, getHabitLogsRange, toggleHabit, computeStreaks, buildCalendarDays, getDateKey, getNWeeksAgoKey } from '../services/habits.js';
+import { HABITS, getHabitLog, getHabitLogsRange, toggleHabit, computeStreaks, buildCalendarDays, getNWeeksAgoKey } from '../services/habits.js';
 import { getTodayKey, showToast } from '../utils.js';
 import { navigateTo } from '../router.js';
 
@@ -14,15 +14,29 @@ function formatShortDate(dateKey) {
   return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
 }
 
+function getFillClass(pct, isFuture) {
+  if (isFuture) return 'cal-dot--future';
+  if (pct === 1)  return 'cal-dot--full';
+  if (pct >= 0.7) return 'cal-dot--most';
+  if (pct >= 0.4) return 'cal-dot--mid';
+  if (pct > 0)    return 'cal-dot--low';
+  return 'cal-dot--empty';
+}
+
+function getDayDoneCount(logsMap, dateKey) {
+  const habits = logsMap[dateKey] || {};
+  return HABITS.filter(h => habits[h.id] === true).length;
+}
+
 // ─── Render: habit toggle pills ───────────────────────────────────────────────
 
 function renderHabitPills(habits, activeDate, isToday) {
   const dateLabel = isToday ? 'Today' : formatShortDate(activeDate);
   return `
-    <div class="habits-pills-section">
+    <div class="habits-pills-section" id="habitsPillsSection">
       <div class="habits-pills-header">
         <p class="habits-pills-date">${dateLabel}</p>
-        ${!isToday ? `<p class="habits-pills-hint">Logging for a past day</p>` : ''}
+        ${!isToday ? '<p class="habits-pills-hint">Logging a past day</p>' : ''}
       </div>
       <div class="habits-pills-list">
         ${HABITS.map(h => {
@@ -37,7 +51,7 @@ function renderHabitPills(habits, activeDate, isToday) {
             >
               <span class="habit-pill-emoji">${h.emoji}</span>
               <span class="habit-pill-label">${h.label}</span>
-              <span class="habit-pill-check">${done ? '✓' : ''}</span>
+              <span class="habit-pill-check" aria-hidden="true">${done ? '✓' : ''}</span>
             </button>
           `;
         }).join('')}
@@ -48,57 +62,43 @@ function renderHabitPills(habits, activeDate, isToday) {
 
 // ─── Render: 4-week dot calendar ──────────────────────────────────────────────
 
-function renderCalendar(calendarDays, logsMap, activeDate, todayKey) {
+function renderCalendar(calendarDays, logsMap, activeDate) {
   const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const total = HABITS.length;
 
   return `
     <div class="habits-calendar-section">
       <div class="habits-calendar-header">
         <p class="habits-section-label">Last 4 weeks</p>
-        <p class="habits-calendar-hint">Tap a day to log</p>
+        <p class="habits-calendar-hint">Tap any day to log</p>
       </div>
-
       <div class="habits-cal-day-labels">
         ${DAY_LABELS.map(l => `<p class="habits-cal-day-label">${l}</p>`).join('')}
       </div>
-
-      <div class="habits-cal-grid">
+      <div class="habits-cal-grid" id="habitsCalGrid">
         ${calendarDays.map(day => {
-          const habits = logsMap[day.dateKey] || {};
-          const totalDone = HABITS.filter(h => habits[h.id] === true).length;
-          const total = HABITS.length;
-          const pct = total > 0 ? totalDone / total : 0;
+          const doneCount = getDayDoneCount(logsMap, day.dateKey);
+          const pct = total > 0 ? doneCount / total : 0;
+          const fillClass = getFillClass(pct, day.isFuture);
           const isActive = day.dateKey === activeDate;
-          const isFuture = day.isFuture;
-
-          // Fill level class
-          let fillClass = 'cal-dot--empty';
-          if (!isFuture) {
-            if (pct >= 0.8) fillClass = 'cal-dot--full';
-            else if (pct >= 0.5) fillClass = 'cal-dot--high';
-            else if (pct >= 0.2) fillClass = 'cal-dot--mid';
-            else if (pct > 0) fillClass = 'cal-dot--low';
-          }
-
           return `
             <button
-              class="cal-dot ${fillClass}${isActive ? ' cal-dot--active' : ''}${day.isToday ? ' cal-dot--today' : ''}${isFuture ? ' cal-dot--future' : ''}"
+              class="cal-dot ${fillClass}${isActive ? ' cal-dot--active' : ''}${day.isToday ? ' cal-dot--today' : ''}"
               data-cal-date="${day.dateKey}"
-              aria-label="${formatDisplayDate(day.dateKey)}: ${totalDone} of ${total} habits"
-              ${isFuture ? 'disabled' : ''}
+              aria-label="${formatDisplayDate(day.dateKey)}: ${doneCount} of ${total}"
+              ${day.isFuture ? 'disabled' : ''}
             >
               <span class="cal-dot-day">${day.dayOfMonth}</span>
             </button>
           `;
         }).join('')}
       </div>
-
       <div class="habits-cal-legend">
-        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--empty"></div><p>None</p></div>
-        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--low"></div><p>Some</p></div>
-        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--mid"></div><p>Half</p></div>
-        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--high"></div><p>Most</p></div>
-        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--full"></div><p>All</p></div>
+        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--empty"></div><span>None</span></div>
+        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--low"></div><span>Some</span></div>
+        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--mid"></div><span>Half</span></div>
+        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--most"></div><span>Most</span></div>
+        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--full"></div><span>All ✦</span></div>
       </div>
     </div>
   `;
@@ -108,17 +108,19 @@ function renderCalendar(calendarDays, logsMap, activeDate, todayKey) {
 
 function renderStreaks(streaks) {
   return `
-    <div class="habits-streaks-section">
+    <div class="habits-streaks-section" id="habitsStreaksSection">
       <p class="habits-section-label">Streaks</p>
       <div class="habits-streaks-list">
         ${HABITS.map(h => {
           const streak = streaks[h.id] || 0;
           return `
-            <div class="habit-streak-row">
+            <div class="habit-streak-row" data-streak-id="${h.id}">
               <span class="habit-streak-emoji">${h.emoji}</span>
               <span class="habit-streak-label">${h.label}</span>
               <div class="habit-streak-badge${streak > 0 ? ' habit-streak-badge--active' : ''}">
-                ${streak > 0 ? `<span class="streak-flame">🔥</span><span class="streak-num">${streak}</span>` : `<span class="streak-zero">—</span>`}
+                ${streak > 0
+                  ? `<span class="streak-flame">🔥</span><span class="streak-num">${streak}</span>`
+                  : `<span class="streak-zero">—</span>`}
               </div>
             </div>
           `;
@@ -128,14 +130,12 @@ function renderStreaks(streaks) {
   `;
 }
 
-// ─── Render: full view ────────────────────────────────────────────────────────
+// ─── Full view (initial paint only) ──────────────────────────────────────────
 
-function renderView(todayHabits, logsMap, streaks, calendarDays, activeDate, todayKey) {
-  const isToday = activeDate === todayKey;
+function renderView(habits, logsMap, streaks, calendarDays, activeDate, todayKey) {
   return `
     <main class="view-scroll">
       <div class="view-inner">
-
         <header class="page-header">
           <p class="eyebrow">Grounded</p>
           <div class="header-row">
@@ -148,21 +148,61 @@ function renderView(todayHabits, logsMap, streaks, calendarDays, activeDate, tod
             </button>
           </div>
         </header>
-
-        ${renderHabitPills(todayHabits, activeDate, isToday)}
-        ${renderCalendar(calendarDays, logsMap, activeDate, todayKey)}
+        ${renderHabitPills(habits, activeDate, activeDate === todayKey)}
+        ${renderCalendar(calendarDays, logsMap, activeDate)}
         ${renderStreaks(streaks)}
-
       </div>
     </main>
   `;
+}
+
+// ─── Surgical DOM updaters (no scroll jump) ────────────────────────────────────
+
+function patchPill(habitId, done) {
+  const btn = document.querySelector(`[data-habit-id="${habitId}"]`);
+  if (!btn) return;
+  btn.classList.toggle('habit-pill--done', done);
+  btn.setAttribute('aria-pressed', String(done));
+  const check = btn.querySelector('.habit-pill-check');
+  if (check) check.textContent = done ? '✓' : '';
+}
+
+function patchCalDot(dateKey, logsMap) {
+  const btn = document.querySelector(`[data-cal-date="${dateKey}"]`);
+  if (!btn) return;
+  const total = HABITS.length;
+  const doneCount = getDayDoneCount(logsMap, dateKey);
+  const pct = total > 0 ? doneCount / total : 0;
+  const fillClass = getFillClass(pct, false);
+  btn.classList.remove('cal-dot--empty', 'cal-dot--low', 'cal-dot--mid', 'cal-dot--most', 'cal-dot--full');
+  btn.classList.add(fillClass);
+  btn.setAttribute('aria-label', `${formatDisplayDate(dateKey)}: ${doneCount} of ${total}`);
+}
+
+function patchStreak(habitId, streak) {
+  const row = document.querySelector(`[data-streak-id="${habitId}"]`);
+  if (!row) return;
+  const badge = row.querySelector('.habit-streak-badge');
+  if (!badge) return;
+  badge.className = `habit-streak-badge${streak > 0 ? ' habit-streak-badge--active' : ''}`;
+  badge.innerHTML = streak > 0
+    ? `<span class="streak-flame">🔥</span><span class="streak-num">${streak}</span>`
+    : `<span class="streak-zero">—</span>`;
+}
+
+function rebuildPillsSection(habits, activeDate, todayKey) {
+  const section = document.getElementById('habitsPillsSection');
+  if (!section) return;
+  const fresh = document.createElement('div');
+  fresh.innerHTML = renderHabitPills(habits, activeDate, activeDate === todayKey);
+  section.replaceWith(fresh.firstElementChild);
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 export const HabitsView = {
   async init(container, user) {
-    container.innerHTML = `<div class="loading-state"><p>Loading habits…</p></div>`;
+    container.innerHTML = '<div class="loading-state"><p>Loading habits\u2026</p></div>';
 
     const todayKey = getTodayKey();
     const startKey = getNWeeksAgoKey(4);
@@ -172,43 +212,39 @@ export const HabitsView = {
       getHabitLogsRange(user.uid, startKey, todayKey)
     ]);
 
-    // Ensure today is in the map
-    logsMap[todayKey] = todayHabits;
+    logsMap[todayKey] = { ...todayHabits };
 
-    const streaks    = computeStreaks(logsMap, todayKey);
-    const calDays    = buildCalendarDays(todayKey);
-
-    // ── Module-level state ──
     let activeDate    = todayKey;
     let activeHabits  = { ...todayHabits };
     let currentLogs   = { ...logsMap };
-    let currentStreaks = { ...streaks };
+    let currentStreaks = computeStreaks(currentLogs, todayKey);
+    const calDays     = buildCalendarDays(todayKey);
 
-    function rebuild() {
-      const isToday = activeDate === todayKey;
-      container.innerHTML = renderView(activeHabits, currentLogs, currentStreaks, calDays, activeDate, todayKey);
-      bindEvents();
-    }
+    // Initial full render — only time we set innerHTML on the container
+    container.innerHTML = renderView(activeHabits, currentLogs, currentStreaks, calDays, activeDate, todayKey);
 
-    function bindEvents() {
+    document.getElementById('habitsBackBtn')?.addEventListener('click', () => {
+      navigateTo('today');
+    });
 
-      // ── Back button ──
-      document.getElementById('habitsBackBtn')?.addEventListener('click', () => {
-        navigateTo('today');
-      });
+    bindPillEvents();
+    bindCalEvents();
 
-      // ── Habit pill toggles ──
+    function bindPillEvents() {
       document.querySelectorAll('[data-habit-id]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const habitId = btn.dataset.habitId;
           const current = activeHabits[habitId] === true;
           const newVal  = !current;
 
-          // Optimistic update
+          // Optimistic surgical patch — scroll position untouched
           activeHabits[habitId] = newVal;
           currentLogs[activeDate] = { ...(currentLogs[activeDate] || {}), [habitId]: newVal };
           currentStreaks = computeStreaks(currentLogs, todayKey);
-          rebuild();
+
+          patchPill(habitId, newVal);
+          patchCalDot(activeDate, currentLogs);
+          patchStreak(habitId, currentStreaks[habitId] || 0);
 
           try {
             await toggleHabit(user.uid, activeDate, habitId, newVal);
@@ -217,41 +253,49 @@ export const HabitsView = {
             activeHabits[habitId] = current;
             currentLogs[activeDate][habitId] = current;
             currentStreaks = computeStreaks(currentLogs, todayKey);
-            rebuild();
-            showToast('Save failed — try again', 'error');
+            patchPill(habitId, current);
+            patchCalDot(activeDate, currentLogs);
+            patchStreak(habitId, currentStreaks[habitId] || 0);
+            showToast('Save failed \u2014 try again', 'error');
           }
         });
       });
+    }
 
-      // ── Calendar day taps ──
+    function bindCalEvents() {
       document.querySelectorAll('[data-cal-date]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const dateKey = btn.dataset.calDate;
           if (dateKey === activeDate) return;
 
+          // Move active highlight
+          document.querySelectorAll('[data-cal-date]').forEach(b => {
+            b.classList.toggle('cal-dot--active', b.dataset.calDate === dateKey);
+          });
+
           activeDate = dateKey;
 
-          // Load that day's log if we don't have it yet
           if (!currentLogs[dateKey]) {
             try {
-              const log = await getHabitLog(user.uid, dateKey);
-              currentLogs[dateKey] = log;
+              currentLogs[dateKey] = await getHabitLog(user.uid, dateKey);
             } catch {
               currentLogs[dateKey] = {};
             }
           }
 
           activeHabits = { ...(currentLogs[dateKey] || {}) };
-          rebuild();
 
-          // Scroll pills into view
+          // Rebuild pills section only (small swap, not full page)
+          rebuildPillsSection(activeHabits, activeDate, todayKey);
+          bindPillEvents();
+
+          // Scroll pills gently into view if they're offscreen
           setTimeout(() => {
-            document.querySelector('.habits-pills-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            document.getElementById('habitsPillsSection')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }, 60);
         });
       });
     }
-
-    rebuild();
   }
 };

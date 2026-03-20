@@ -2308,89 +2308,95 @@ body {
 
 /* ─── Quick check-in card ────────────────────────────────────────────────────── */
 
+/* ─── Quick check-in ─────────────────────────────────────────────────────────── */
+
 .qci-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-card);
-  padding: 16px 18px;
+  padding: 18px 20px;
   margin-bottom: 12px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-  transition: box-shadow 0.2s ease;
 }
 
-/* Tick flash on save */
 .qci-card--saved {
   box-shadow: 0 0 0 2px #6ba88a;
   transition: box-shadow 0.15s ease;
 }
 
-/* Summary (collapsed) state */
 .qci-card--summary {
-  padding: 13px 18px;
+  padding: 14px 20px;
 }
 
 .qci-heading {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--color-ink-4);
-  margin-bottom: 12px;
-}
-
-.qci-section {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.qci-section--energy {
-  margin-top: 10px;
-}
-
-.qci-label {
   font-size: 12px;
   font-weight: 500;
   color: var(--color-ink-3);
-  min-width: 46px;
-  flex-shrink: 0;
+  margin-bottom: 14px;
+  letter-spacing: 0.02em;
 }
 
-.qci-pills {
+/* Button grid rows */
+.qci-group {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.qci-group--energy {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.qci-divider {
+  height: 1px;
+  background: var(--color-border-soft);
+  margin: 12px 0;
+}
+
+/* Individual option buttons */
+.qci-btn {
   display: flex;
-  gap: 7px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: var(--color-surface-2);
+  border: 1.5px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 6px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: all 0.13s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.qci-pill {
-  background: var(--color-surface-2);
-  color: var(--color-ink-2);
-  border: 1px solid var(--color-border-soft);
-  border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  transition: all 0.12s ease;
+.qci-btn:active {
+  transform: scale(0.94);
+}
+
+.qci-btn-emoji {
+  font-size: 22px;
   line-height: 1;
 }
 
-.qci-pill:hover {
-  border-color: var(--color-ink-3);
+.qci-btn-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-ink-3);
+  letter-spacing: 0.03em;
+  text-align: center;
 }
 
-.qci-pill:active {
-  transform: scale(0.95);
-}
-
-.qci-pill--selected {
+.qci-btn--selected {
   background: var(--color-ink);
-  color: var(--color-accent-text);
   border-color: var(--color-ink);
 }
 
-/* Summary row */
+.qci-btn--selected .qci-btn-label {
+  color: var(--color-accent-text);
+}
+
+/* Summary (collapsed) state */
 .qci-summary-row {
   display: flex;
   align-items: center;
@@ -2398,29 +2404,24 @@ body {
   gap: 12px;
 }
 
-.qci-summary-values {
+.qci-summary-pair {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.qci-summary-item {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-ink-2);
-  display: flex;
+.qci-summary-chip {
+  display: inline-flex;
   align-items: center;
   gap: 5px;
-}
-
-.qci-summary-label {
-  font-weight: 400;
-}
-
-.qci-summary-sep {
-  color: var(--color-ink-4);
   font-size: 13px;
+  font-weight: 400;
+  color: var(--color-ink-2);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 20px;
+  padding: 5px 12px;
 }
 
 .qci-edit-btn {
@@ -2438,9 +2439,7 @@ body {
   flex-shrink: 0;
 }
 
-.qci-edit-btn:hover {
-  color: var(--color-ink-2);
-}
+.qci-edit-btn:hover { color: var(--color-ink-2); }
 * ─── Nutrition card ─────────────────────────────────────────────────────────── */
 
 .nutrition-card {
@@ -3609,7 +3608,6 @@ body {
 }
 
 .workout-tile:active { background: var(--color-surface-2); }
-
 .workout-tile-left { flex: 1; min-width: 0; }
 
 .workout-tile-eyebrow {
@@ -3633,7 +3631,6 @@ body {
   font-size: 12px;
   color: var(--color-ink-3);
   margin-top: 3px;
-  line-height: 1.4;
 }
 
 .workout-tile-right {
@@ -3644,10 +3641,7 @@ body {
   flex-shrink: 0;
 }
 
-.workout-tile-arrow {
-  font-size: 16px;
-  color: var(--color-ink-4);
-}
+.workout-tile-arrow { font-size: 16px; color: var(--color-ink-4); }
 
 .workout-tile-done {
   font-size: 11px;
@@ -3659,10 +3653,7 @@ body {
   white-space: nowrap;
 }
 
-.workout-tile-done--alt {
-  color: #7a6550;
-  background: #f3eeea;
-}
+.workout-tile-done--alt { color: #7a6550; background: #f3eeea; }
 
 /* ─── Habits entry tile (Today page) ─────────────────────────────────────────── */
 
@@ -3738,11 +3729,7 @@ body {
   transform: rotate(-90deg);
 }
 
-.habits-ring-bg {
-  fill: none;
-  stroke: var(--color-surface-2);
-  stroke-width: 3;
-}
+.habits-ring-bg { fill: none; stroke: var(--color-surface-2); stroke-width: 3; }
 
 .habits-ring-fill {
   fill: none;
@@ -3775,12 +3762,14 @@ body {
 .habits-preview-dot {
   font-size: 18px;
   line-height: 1;
-  opacity: 0.3;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  opacity: 0.25;
+  transition: opacity 0.15s ease;
+  filter: grayscale(0.3);
 }
 
 .habits-preview-dot--done {
   opacity: 1;
+  filter: none;
 }
 
 .habits-preview-more {
@@ -3834,7 +3823,7 @@ body {
 }
 
 .habits-pills-date {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--color-ink);
 }
@@ -3848,7 +3837,7 @@ body {
 .habits-pills-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .habit-pill {
@@ -3862,27 +3851,24 @@ body {
   border-radius: var(--radius-btn);
   font-family: var(--font-sans);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
   text-align: left;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.habit-pill:active { opacity: 0.8; }
+.habit-pill:active { transform: scale(0.98); }
 
 .habit-pill--done {
-  background: color-mix(in srgb, var(--habit-color) 12%, var(--color-surface));
-  border-color: color-mix(in srgb, var(--habit-color) 35%, transparent);
+  background: color-mix(in srgb, var(--habit-color) 11%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--habit-color) 30%, transparent);
 }
 
-.habit-pill-emoji {
-  font-size: 18px;
-  line-height: 1;
-  flex-shrink: 0;
-}
+.habit-pill-emoji { font-size: 19px; line-height: 1; flex-shrink: 0; }
 
 .habit-pill-label {
   flex: 1;
   font-size: 14px;
-  color: var(--color-ink);
+  color: var(--color-ink-2);
   font-weight: 400;
 }
 
@@ -3953,16 +3939,18 @@ body {
   align-items: center;
   justify-content: center;
   aspect-ratio: 1;
-  border-radius: 10px;
+  border-radius: 8px;
   border: none;
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: transform 0.1s ease;
   background: var(--color-surface-2);
   padding: 0;
   font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
 }
 
-.cal-dot:disabled { cursor: default; opacity: 0.3; }
+.cal-dot:disabled { cursor: default; opacity: 0.25; }
+.cal-dot:not(:disabled):active { transform: scale(0.88); }
 
 .cal-dot-day {
   font-size: 10px;
@@ -3971,30 +3959,37 @@ body {
   line-height: 1;
 }
 
-.cal-dot--today .cal-dot-day { color: var(--color-ink); font-weight: 600; }
+.cal-dot--today .cal-dot-day { color: var(--color-ink); font-weight: 700; }
 
 .cal-dot--active {
-  outline: 2px solid var(--color-ink-2);
+  outline: 2px solid var(--color-ink);
   outline-offset: 1px;
 }
 
-/* Fill levels */
+/* Fill levels — scaled for visual reward */
 .cal-dot--empty  { background: var(--color-surface-2); }
-.cal-dot--low    { background: #dde8dd; }
-.cal-dot--mid    { background: #b8d1b8; }
-.cal-dot--high   { background: #8ab98a; }
-.cal-dot--full   { background: #5e9a5e; }
+.cal-dot--low    { background: #dce7dc; }
+.cal-dot--mid    { background: #b3ccb3; }
 
-.cal-dot--full .cal-dot-day   { color: #fff; }
-.cal-dot--high .cal-dot-day   { color: #1c3c1c; }
+/* "Most" gets a warm sage — noticeably rewarding */
+.cal-dot--most   {
+  background: #7faa7f;
+  box-shadow: 0 1px 4px rgba(80,130,80,0.18);
+}
+.cal-dot--most .cal-dot-day { color: #fff; font-weight: 600; }
 
-.cal-dot:not(:disabled):active { opacity: 0.7; transform: scale(0.92); }
+/* "All" gets full celebratory treatment — warm gold ring + rich green */
+.cal-dot--full   {
+  background: linear-gradient(135deg, #5e9a5e 0%, #4a8050 100%);
+  box-shadow: 0 0 0 1.5px #c8a84b, 0 2px 6px rgba(60,110,60,0.28);
+}
+.cal-dot--full .cal-dot-day { color: #fff; font-weight: 700; }
 
 /* Legend */
 .habits-cal-legend {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--color-border-soft);
@@ -4007,10 +4002,9 @@ body {
   gap: 5px;
 }
 
-.cal-legend-item p {
+.cal-legend-item span {
   font-size: 10px;
   color: var(--color-ink-4);
-  font-weight: 400;
 }
 
 .cal-legend-dot {
@@ -4030,11 +4024,7 @@ body {
   box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
 
-.habits-streaks-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
+.habits-streaks-list { display: flex; flex-direction: column; }
 
 .habit-streak-row {
   display: flex;
@@ -4057,19 +4047,17 @@ body {
 .habit-streak-badge {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   min-width: 36px;
   justify-content: flex-end;
 }
 
 .habit-streak-badge--active .streak-flame { font-size: 14px; }
+
 .habit-streak-badge--active .streak-num {
   font-size: 14px;
   font-weight: 600;
   color: var(--color-ink);
 }
 
-.streak-zero {
-  font-size: 13px;
-  color: var(--color-ink-4);
-}
+.streak-zero { font-size: 13px; color: var(--color-ink-4); }

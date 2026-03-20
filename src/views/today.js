@@ -7,7 +7,7 @@ import { getTodayDisplay, showToast } from '../utils.js';
 import { fetchWeather } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
 import { getTodayWorkoutSession } from '../services/workouts.js';
-import { getHabitLog, computeStreaks, HABITS } from '../services/habits.js';
+import { getHabitLog, HABITS } from '../services/habits.js';
 import { navigateTo } from '../router.js';
 
 // ─── Weather card ─────────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@ function renderWeatherCard(weather) {
     return `
       <div class="weather-card" id="weatherCard">
         <p class="card-label">Weather</p>
-        <p class="card-body mt-1" style="color:var(--color-ink-4);">Unavailable — check your connection.</p>
+        <p class="card-body mt-1" style="color:var(--color-ink-4);">Unavailable \u2014 check your connection.</p>
       </div>
     `;
   }
@@ -31,7 +31,7 @@ function renderWeatherCard(weather) {
   const { currentTemp, currentEmoji, currentDesc, currentUv, forecast, walkWindow, fromCache, cacheAgeMs } = weather;
 
   const staleNote = fromCache
-    ? `<p class="weather-stale-note">Offline — last updated ${Math.round(cacheAgeMs / 60000)} min ago</p>`
+    ? `<p class="weather-stale-note">Offline \u2014 last updated ${Math.round(cacheAgeMs / 60000)} min ago</p>`
     : '';
 
   const forecastHtml = (forecast || []).map(d => `
@@ -54,13 +54,8 @@ function renderWeatherCard(weather) {
         </div>
         <span class="${uvBadgeClass(currentUv)}">UV ${currentUv}</span>
       </div>
-
       ${walkWindow ? `<div class="weather-walk-window">${walkWindow}</div>` : ''}
-
-      <div class="weather-forecast">
-        ${forecastHtml}
-      </div>
-
+      <div class="weather-forecast">${forecastHtml}</div>
       ${staleNote}
     </div>
   `;
@@ -70,45 +65,39 @@ function renderWeatherCard(weather) {
 
 function getReturnMessage(gapHours) {
   if (gapHours <= 48) return null;
-  if (gapHours > 7 * 24) return { headline: `You've been away for a while.`, sub: `This is your space. Take your time — no catch-up needed.` };
-  if (gapHours > 3 * 24) return { headline: `It's been a few days.`, sub: `Welcome back. No pressure — just checking in when you're ready.` };
+  if (gapHours > 7 * 24) return { headline: `You've been away for a while.`, sub: `This is your space. Take your time \u2014 no catch-up needed.` };
+  if (gapHours > 3 * 24) return { headline: `It's been a few days.`, sub: `Welcome back. No pressure \u2014 just checking in when you're ready.` };
   return { headline: `Good to see you again.`, sub: `It's been a couple of days. Start wherever feels right.` };
 }
 
-// ─── Quick check-in widget ────────────────────────────────────────────────────
+// ─── Quick check-in ───────────────────────────────────────────────────────────
+// Redesigned: large emoji-button grid, no text labels, much warmer feel
 
-const MOOD_OPTIONS   = [
-  { value: 'calm',      label: 'Calm' },
-  { value: 'flat',      label: 'Flat' },
-  { value: 'good',      label: 'Good' },
-  { value: 'stretched', label: 'Stretched' }
+const MOOD_OPTIONS = [
+  { value: 'calm',      emoji: '🌿', label: 'Calm'      },
+  { value: 'good',      emoji: '✨', label: 'Good'      },
+  { value: 'flat',      emoji: '😶', label: 'Flat'      },
+  { value: 'stretched', emoji: '🌊', label: 'Stretched' }
 ];
 
 const ENERGY_OPTIONS = [
-  { value: 'low',    label: 'Low' },
-  { value: 'medium', label: 'Med' },
-  { value: 'high',   label: 'High' }
+  { value: 'low',    emoji: '🌙', label: 'Low'    },
+  { value: 'medium', emoji: '☀️', label: 'Medium' },
+  { value: 'high',   emoji: '⚡', label: 'High'   }
 ];
-
-function moodEmoji(mood) {
-  return { calm: '🌿', flat: '😶', good: '✨', stretched: '🌊' }[mood] || '';
-}
-
-function energyEmoji(energy) {
-  return { low: '🌙', medium: '☀️', high: '⚡' }[energy] || '';
-}
 
 function renderQuickCheckin(mood, energy) {
   const bothSet = mood && energy;
 
   if (bothSet) {
+    const m = MOOD_OPTIONS.find(o => o.value === mood);
+    const e = ENERGY_OPTIONS.find(o => o.value === energy);
     return `
       <div class="qci-card qci-card--summary" id="quickCheckin">
         <div class="qci-summary-row">
-          <div class="qci-summary-values">
-            <span class="qci-summary-item">${moodEmoji(mood)} <span class="qci-summary-label">${mood.charAt(0).toUpperCase() + mood.slice(1)}</span></span>
-            <span class="qci-summary-sep">·</span>
-            <span class="qci-summary-item">${energyEmoji(energy)} <span class="qci-summary-label">${energy.charAt(0).toUpperCase() + energy.slice(1)} energy</span></span>
+          <div class="qci-summary-pair">
+            <span class="qci-summary-chip">${m?.emoji || ''} ${m?.label || mood}</span>
+            <span class="qci-summary-chip">${e?.emoji || ''} ${e?.label || energy}</span>
           </div>
           <button class="qci-edit-btn" id="qciEditBtn" aria-label="Edit check-in">Edit</button>
         </div>
@@ -118,32 +107,44 @@ function renderQuickCheckin(mood, energy) {
 
   return `
     <div class="qci-card" id="quickCheckin">
-      <p class="qci-heading">Quick check-in</p>
+      <p class="qci-heading">How are you today?</p>
 
-      <div class="qci-section">
-        <p class="qci-label">Mood</p>
-        <div class="qci-pills" role="group" aria-label="Mood">
-          ${MOOD_OPTIONS.map(o => `
-            <button type="button" class="qci-pill${mood === o.value ? ' qci-pill--selected' : ''}"
-              data-qci-group="mood" data-value="${o.value}">${o.label}</button>
-          `).join('')}
-        </div>
+      <div class="qci-group">
+        ${MOOD_OPTIONS.map(o => `
+          <button type="button"
+            class="qci-btn${mood === o.value ? ' qci-btn--selected' : ''}"
+            data-qci-group="mood" data-value="${o.value}"
+            aria-pressed="${mood === o.value}"
+          >
+            <span class="qci-btn-emoji">${o.emoji}</span>
+            <span class="qci-btn-label">${o.label}</span>
+          </button>
+        `).join('')}
       </div>
 
-      <div class="qci-section qci-section--energy">
-        <p class="qci-label">Energy</p>
-        <div class="qci-pills" role="group" aria-label="Energy">
-          ${ENERGY_OPTIONS.map(o => `
-            <button type="button" class="qci-pill${energy === o.value ? ' qci-pill--selected' : ''}"
-              data-qci-group="energy" data-value="${o.value}">${o.label}</button>
-          `).join('')}
-        </div>
+      <div class="qci-divider"></div>
+
+      <div class="qci-group qci-group--energy">
+        ${ENERGY_OPTIONS.map(o => `
+          <button type="button"
+            class="qci-btn${energy === o.value ? ' qci-btn--selected' : ''}"
+            data-qci-group="energy" data-value="${o.value}"
+            aria-pressed="${energy === o.value}"
+          >
+            <span class="qci-btn-emoji">${o.emoji}</span>
+            <span class="qci-btn-label">${o.label}</span>
+          </button>
+        `).join('')}
       </div>
     </div>
   `;
 }
 
 // ─── Nutrition card ───────────────────────────────────────────────────────────
+
+function energyEmoji(energy) {
+  return { low: '🌙', medium: '☀️', high: '⚡' }[energy] || '';
+}
 
 function renderNutritionCard(energy, nutritionLog) {
   const suggestions = getSuggestionsForEnergy(energy || 'medium', 3);
@@ -179,7 +180,7 @@ function renderNutritionCard(energy, nutritionLog) {
           class="nutrition-toggle${nourished ? ' nutrition-toggle--done' : ''}"
           aria-pressed="${nourished}"
         >
-          ${nourished ? '✓ Nourished well today' : 'I nourished well today'}
+          ${nourished ? '\u2713 Nourished well today' : 'I nourished well today'}
         </button>
       </div>
 
@@ -215,9 +216,9 @@ function renderWorkoutTile(savedSession) {
 
   let statusLine = '';
   if (isDone && isAlternate) {
-    statusLine = `<span class="workout-tile-done workout-tile-done--alt">✓ ${savedSession.alternateLabel || 'Activity'} done</span>`;
+    statusLine = `<span class="workout-tile-done workout-tile-done--alt">\u2713 ${savedSession.alternateLabel || 'Activity'} done</span>`;
   } else if (isDone) {
-    statusLine = `<span class="workout-tile-done">✓ Done today</span>`;
+    statusLine = `<span class="workout-tile-done">\u2713 Done today</span>`;
   }
 
   return `
@@ -230,7 +231,7 @@ function renderWorkoutTile(savedSession) {
       <div class="workout-tile-right">
         <span class="tag ${getTypeColor(split.type)}">${getTypeTag(split.type)}</span>
         ${statusLine}
-        <span class="workout-tile-arrow">→</span>
+        <span class="workout-tile-arrow">\u2192</span>
       </div>
     </button>
   `;
@@ -254,16 +255,18 @@ function renderHabitsTile(todayHabits) {
           <p class="habits-tile-count">${doneCount} <span>of ${total}</span></p>
         </div>
         <div class="habits-tile-right">
-          <div class="habits-tile-ring" style="--pct: ${pct}">
+          <div class="habits-tile-ring">
             <svg viewBox="0 0 36 36" class="habits-ring-svg">
               <circle class="habits-ring-bg" cx="18" cy="18" r="14"/>
               <circle class="habits-ring-fill" cx="18" cy="18" r="14"
-                stroke-dasharray="${pct * 0.879} 100"
+                stroke-dasharray="${(pct * 0.879).toFixed(1)} 100"
                 stroke="${allDone ? '#5a7a5a' : 'var(--color-ink-2)'}"/>
             </svg>
-            ${allDone ? `<span class="habits-ring-check">✓</span>` : `<span class="habits-ring-pct">${pct}%</span>`}
+            ${allDone
+              ? '<span class="habits-ring-check">\u2713</span>'
+              : `<span class="habits-ring-pct">${pct}%</span>`}
           </div>
-          <span class="workout-tile-arrow">→</span>
+          <span class="workout-tile-arrow">\u2192</span>
         </div>
       </div>
       <div class="habits-tile-preview">
@@ -288,7 +291,7 @@ function renderReturnCard(returnMsg) {
           <p class="return-card-headline">${returnMsg.headline}</p>
           <p class="return-card-sub">${returnMsg.sub}</p>
         </div>
-        <button class="return-card-dismiss" id="returnCardDismiss" aria-label="Dismiss">✕</button>
+        <button class="return-card-dismiss" id="returnCardDismiss" aria-label="Dismiss">\u2715</button>
       </div>
     </div>
   `;
@@ -308,44 +311,18 @@ function renderView(user, wellness, returnMsg, nutritionLog, weather, savedSessi
               <h1 class="page-title">Welcome, ${firstName}</h1>
               <p class="page-subtitle">${getTodayDisplay()}</p>
             </div>
-            ${user.photoURL ? `
-              <img src="${user.photoURL}" alt="${user.displayName || 'Profile'}" class="avatar" />
-            ` : ''}
+            ${user.photoURL ? `<img src="${user.photoURL}" alt="${user.displayName || 'Profile'}" class="avatar" />` : ''}
           </div>
         </header>
 
         ${renderReturnCard(returnMsg)}
-
         ${renderWeatherCard(weather)}
-
         ${renderQuickCheckin(wellness.mood || '', wellness.energy || '')}
 
         <div class="card-stack">
-
           ${renderWorkoutTile(savedSession)}
-
           ${renderHabitsTile(todayHabits)}
-
           ${renderNutritionCard(wellness.energy || '', nutritionLog)}
-
-          <!-- Hydration -->
-          <div class="card">
-            <div class="card-row">
-              <div>
-                <p class="card-label">Hydration</p>
-                <p class="card-body">Glasses of water today.</p>
-              </div>
-              <div class="stat-block">
-                <p id="hydrationCount" class="stat-number">${wellness.hydrationGlasses || 0}</p>
-                <p class="stat-unit">glasses</p>
-              </div>
-            </div>
-            <div class="btn-row mt-4">
-              <button id="decreaseHydrationBtn" class="btn-secondary flex-1">− Remove</button>
-              <button id="increaseHydrationBtn" class="btn-primary flex-1">+ Add glass</button>
-            </div>
-          </div>
-
         </div>
 
         <p id="wellnessStatus" class="status-text mt-4 px-1"></p>
@@ -359,14 +336,14 @@ function renderView(user, wellness, returnMsg, nutritionLog, weather, savedSessi
 
 export const TodayView = {
   async init(container, user) {
-    container.innerHTML = `<div class="loading-state"><p>Loading your dashboard…</p></div>`;
+    container.innerHTML = '<div class="loading-state"><p>Loading your dashboard\u2026</p></div>';
 
     const { getTodayKey } = await import('../utils.js');
     const todayKey = getTodayKey();
 
     const [wellness, , { gapHours }, nutritionLog, weather, savedSession, todayHabits] = await Promise.all([
       getTodayWellnessCheckin(user.uid),
-      getTodayJournalEntry(user.uid),   // kept for completeness — unused on Today now
+      getTodayJournalEntry(user.uid),
       getLastActiveGap(user.uid),
       getTodayNutritionLog(user.uid),
       fetchWeather().catch(() => null),
@@ -380,9 +357,7 @@ export const TodayView = {
 
     container.innerHTML = renderView(user, wellness, returnMsg, nutritionLog, weather, savedSession, todayHabits);
 
-    // ── State ──
     const wellnessState = {
-      hydrationGlasses: wellness.hydrationGlasses || 0,
       mood:   wellness.mood   || '',
       energy: wellness.energy || ''
     };
@@ -392,10 +367,9 @@ export const TodayView = {
       note:      nutritionLog.note      || ''
     };
 
-    const hydrationCountEl = document.getElementById('hydrationCount');
     const wellnessStatusEl = document.getElementById('wellnessStatus');
 
-    // ── Return card dismiss ──
+    // ── Return card ──
     document.getElementById('returnCardDismiss')?.addEventListener('click', () => {
       _returnDismissed = true;
       const card = document.getElementById('returnCard');
@@ -405,12 +379,12 @@ export const TodayView = {
       }
     });
 
-    // ── Workout tile → navigate to workouts ──
+    // ── Workout tile ──
     document.getElementById('workoutTileBtn')?.addEventListener('click', () => {
       navigateTo('workouts');
     });
 
-    // ── Habits tile → navigate to habits ──
+    // ── Habits tile ──
     document.getElementById('habitsTileBtn')?.addEventListener('click', () => {
       navigateTo('habits');
     });
@@ -440,17 +414,21 @@ export const TodayView = {
           wellnessState[group] = val;
 
           document.querySelectorAll(`[data-qci-group="${group}"]`).forEach(b => {
-            b.classList.toggle('qci-pill--selected', b.dataset.value === val);
+            b.classList.toggle('qci-btn--selected', b.dataset.value === val);
+            b.setAttribute('aria-pressed', b.dataset.value === val);
           });
 
           try {
             await saveTodayWellnessCheckin(user.uid, wellnessState);
             if (wellnessState.mood && wellnessState.energy) {
               showQciTick();
-              setTimeout(() => { rebuildQci(); rebuildNutritionCard(); }, 700);
+              setTimeout(() => {
+                rebuildQci();
+                rebuildNutritionCard();
+              }, 700);
             }
           } catch {
-            showToast('Save failed — try again', 'error');
+            showToast('Save failed \u2014 try again', 'error');
           }
         });
       });
@@ -485,18 +463,18 @@ export const TodayView = {
       toggleBtn.addEventListener('click', async () => {
         nutritionState.nourished = !nutritionState.nourished;
         toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
-        toggleBtn.setAttribute('aria-pressed', nutritionState.nourished);
-        toggleBtn.textContent = nutritionState.nourished ? '✓ Nourished well today' : 'I nourished well today';
+        toggleBtn.setAttribute('aria-pressed', String(nutritionState.nourished));
+        toggleBtn.textContent = nutritionState.nourished ? '\u2713 Nourished well today' : 'I nourished well today';
 
         try {
           await saveTodayNutritionLog(user.uid, { nourished: nutritionState.nourished });
-          if (nutritionState.nourished) showToast('Noted — well done 🌿', 'success', 1800);
+          if (nutritionState.nourished) showToast('Noted \u2014 well done \uD83C\uDF3F', 'success', 1800);
         } catch {
           nutritionState.nourished = !nutritionState.nourished;
           toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
-          toggleBtn.setAttribute('aria-pressed', nutritionState.nourished);
-          toggleBtn.textContent = nutritionState.nourished ? '✓ Nourished well today' : 'I nourished well today';
-          showToast('Save failed — try again', 'error');
+          toggleBtn.setAttribute('aria-pressed', String(nutritionState.nourished));
+          toggleBtn.textContent = nutritionState.nourished ? '\u2713 Nourished well today' : 'I nourished well today';
+          showToast('Save failed \u2014 try again', 'error');
         }
       });
 
@@ -506,40 +484,15 @@ export const TodayView = {
         clearTimeout(_noteDebounce);
         _noteDebounce = setTimeout(async () => {
           try { await saveTodayNutritionLog(user.uid, { note: nutritionState.note }); }
-          catch { showToast('Note save failed — try again', 'error'); }
+          catch { showToast('Note save failed \u2014 try again', 'error'); }
         }, 800);
       });
-
-      noteInput.addEventListener('keydown', (e) => {
+      noteInput.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); noteInput.blur(); }
       });
     }
 
     bindNutrition();
-
-    // ── Wellness persistence ──
-    async function persistWellness() {
-      try {
-        await saveTodayWellnessCheckin(user.uid, wellnessState);
-        showToast('Saved', 'success', 1600);
-      } catch {
-        showToast('Save failed — tap to retry', 'error');
-        wellnessStatusEl.textContent = '';
-      }
-    }
-
-    // ── Hydration ──
-    document.getElementById('increaseHydrationBtn').addEventListener('click', async () => {
-      wellnessState.hydrationGlasses += 1;
-      hydrationCountEl.textContent = wellnessState.hydrationGlasses;
-      await persistWellness();
-    });
-
-    document.getElementById('decreaseHydrationBtn').addEventListener('click', async () => {
-      wellnessState.hydrationGlasses = Math.max(0, wellnessState.hydrationGlasses - 1);
-      hydrationCountEl.textContent = wellnessState.hydrationGlasses;
-      await persistWellness();
-    });
   }
 };
 
