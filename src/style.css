@@ -636,6 +636,25 @@ body {
 .mode-card-label { font-size: 12px; font-weight: 500; color: var(--color-ink-2); margin-top: 6px; }
 .mode-card-desc  { font-size: 11px; color: var(--color-ink-4); margin-top: 2px; line-height: 1.4; }
 
+/* Scrollable 2-week strip */
+.week-strip-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+
+.week-strip-scroll::-webkit-scrollbar { display: none; }
+
+.week-strip-inner {
+  display: flex;
+  gap: 4px;
+  width: max-content;
+  padding-right: 24px; /* trailing space so last day isn't cut off */
+}
+
+/* Keep old name for anything else using it */
 .week-strip { display: flex; justify-content: space-between; gap: 4px; }
 
 .week-day {
@@ -2308,95 +2327,89 @@ body {
 
 /* ─── Quick check-in card ────────────────────────────────────────────────────── */
 
-/* ─── Quick check-in ─────────────────────────────────────────────────────────── */
-
 .qci-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-card);
-  padding: 18px 20px;
+  padding: 16px 18px;
   margin-bottom: 12px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  transition: box-shadow 0.2s ease;
 }
 
+/* Tick flash on save */
 .qci-card--saved {
   box-shadow: 0 0 0 2px #6ba88a;
   transition: box-shadow 0.15s ease;
 }
 
+/* Summary (collapsed) state */
 .qci-card--summary {
-  padding: 14px 20px;
+  padding: 13px 18px;
 }
 
 .qci-heading {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+  margin-bottom: 12px;
+}
+
+.qci-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.qci-section--energy {
+  margin-top: 10px;
+}
+
+.qci-label {
   font-size: 12px;
   font-weight: 500;
   color: var(--color-ink-3);
-  margin-bottom: 14px;
-  letter-spacing: 0.02em;
+  min-width: 46px;
+  flex-shrink: 0;
 }
 
-/* Button grid rows */
-.qci-group {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-}
-
-.qci-group--energy {
-  grid-template-columns: repeat(3, 1fr);
-}
-
-.qci-divider {
-  height: 1px;
-  background: var(--color-border-soft);
-  margin: 12px 0;
-}
-
-/* Individual option buttons */
-.qci-btn {
+.qci-pills {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.qci-pill {
   background: var(--color-surface-2);
-  border: 1.5px solid var(--color-border-soft);
-  border-radius: var(--radius-sm);
-  padding: 10px 6px;
-  cursor: pointer;
+  color: var(--color-ink-2);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
   font-family: var(--font-sans);
-  transition: all 0.13s ease;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.qci-btn:active {
-  transform: scale(0.94);
-}
-
-.qci-btn-emoji {
-  font-size: 22px;
+  cursor: pointer;
+  transition: all 0.12s ease;
   line-height: 1;
 }
 
-.qci-btn-label {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--color-ink-3);
-  letter-spacing: 0.03em;
-  text-align: center;
+.qci-pill:hover {
+  border-color: var(--color-ink-3);
 }
 
-.qci-btn--selected {
+.qci-pill:active {
+  transform: scale(0.95);
+}
+
+.qci-pill--selected {
   background: var(--color-ink);
+  color: var(--color-accent-text);
   border-color: var(--color-ink);
 }
 
-.qci-btn--selected .qci-btn-label {
-  color: var(--color-accent-text);
-}
-
-/* Summary (collapsed) state */
+/* Summary row */
 .qci-summary-row {
   display: flex;
   align-items: center;
@@ -2404,24 +2417,29 @@ body {
   gap: 12px;
 }
 
-.qci-summary-pair {
+.qci-summary-values {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.qci-summary-chip {
-  display: inline-flex;
+.qci-summary-item {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 13px;
+}
+
+.qci-summary-label {
   font-weight: 400;
-  color: var(--color-ink-2);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border-soft);
-  border-radius: 20px;
-  padding: 5px 12px;
+}
+
+.qci-summary-sep {
+  color: var(--color-ink-4);
+  font-size: 13px;
 }
 
 .qci-edit-btn {
@@ -2439,7 +2457,9 @@ body {
   flex-shrink: 0;
 }
 
-.qci-edit-btn:hover { color: var(--color-ink-2); }
+.qci-edit-btn:hover {
+  color: var(--color-ink-2);
+}
 * ─── Nutrition card ─────────────────────────────────────────────────────────── */
 
 .nutrition-card {
@@ -3588,476 +3608,108 @@ body {
   font-style: italic;
 }
 
-/* ─── Today workout tile ──────────────────────────────────────────────────────── */
+/* ─── Week day extended ──────────────────────────────────────────────────────── */
 
-.workout-tile {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-card);
-  padding: 18px 20px;
-  width: 100%;
-  text-align: left;
-  cursor: pointer;
-  font-family: var(--font-sans);
-  transition: background 0.15s ease;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+/* Fixed width so days are uniform across the scroll strip */
+.week-strip-inner .week-day {
+  flex: none;
+  width: 52px;
 }
 
-.workout-tile:active { background: var(--color-surface-2); }
-.workout-tile-left { flex: 1; min-width: 0; }
+.week-day--past {
+  opacity: 0.45;
+}
 
-.workout-tile-eyebrow {
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+.week-day-date {
+  font-size: 9px;
   color: var(--color-ink-4);
-  margin-bottom: 4px;
+  text-align: center;
+  letter-spacing: 0.02em;
+  margin-top: -2px;
 }
 
-.workout-tile-label {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 500;
-  color: var(--color-ink);
-  line-height: 1.2;
-}
-
-.workout-tile-focus {
-  font-size: 12px;
+.week-day--today .week-day-date {
   color: var(--color-ink-3);
-  margin-top: 3px;
 }
 
-.workout-tile-right {
+.week-day-dot--pushed {
+  box-shadow: 0 0 0 2px #c8a84b;
+}
+
+.week-day-pushed {
+  font-size: 9px;
+  color: #c8a84b;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+/* ─── Alternate activities ───────────────────────────────────────────────────── */
+
+.alt-activity-card {
+  /* inherits .card */
+}
+
+.alt-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.alt-activity-btn {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 12px 8px;
+  background: var(--color-surface-2);
+  border: 1.5px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background 0.13s ease, border-color 0.13s ease, transform 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.workout-tile-arrow { font-size: 16px; color: var(--color-ink-4); }
+.alt-activity-btn:active {
+  transform: scale(0.94);
+  background: var(--color-surface);
+}
 
-.workout-tile-done {
+.alt-activity-emoji {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.alt-activity-label {
   font-size: 11px;
   font-weight: 500;
-  color: #5a7a5a;
+  color: var(--color-ink-3);
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+/* Confirm overlay variant */
+.overlay-opt--confirm {
+  background: color-mix(in srgb, var(--color-ink) 6%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-ink) 18%, transparent);
+}
+
+/* Alt tag */
+.tag--alt {
   background: #edf3ed;
+  color: #5a7a5a;
   border-radius: 20px;
-  padding: 3px 9px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
-.workout-tile-done--alt { color: #7a6550; background: #f3eeea; }
-
-/* ─── Habits entry tile (Today page) ─────────────────────────────────────────── */
-
-.habits-entry-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-card);
-  padding: 18px 20px;
-  width: 100%;
-  text-align: left;
-  cursor: pointer;
-  font-family: var(--font-sans);
-  transition: background 0.15s ease;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-}
-
-.habits-entry-tile:active { background: var(--color-surface-2); }
-
-.habits-tile-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.habits-tile-eyebrow {
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--color-ink-4);
-  margin-bottom: 4px;
-}
-
-.habits-tile-count {
-  font-family: var(--font-display);
-  font-size: 22px;
-  font-weight: 500;
-  color: var(--color-ink);
-  line-height: 1.1;
-}
-
-.habits-tile-count span {
-  font-size: 14px;
-  color: var(--color-ink-3);
-  font-family: var(--font-sans);
-  font-weight: 400;
-}
-
-.habits-tile-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.habits-tile-ring {
-  position: relative;
-  width: 42px;
-  height: 42px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.habits-ring-svg {
-  position: absolute;
-  top: 0; left: 0;
-  width: 100%; height: 100%;
-  transform: rotate(-90deg);
-}
-
-.habits-ring-bg { fill: none; stroke: var(--color-surface-2); stroke-width: 3; }
-
-.habits-ring-fill {
-  fill: none;
-  stroke-width: 3;
-  stroke-linecap: round;
-  transition: stroke-dasharray 0.4s ease;
-}
-
-.habits-ring-pct {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-ink-2);
-  position: relative;
-  z-index: 1;
-}
-
-.habits-ring-check {
-  font-size: 14px;
-  color: #5a7a5a;
-  position: relative;
-  z-index: 1;
-}
-
-.habits-tile-preview {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.habits-preview-dot {
-  font-size: 18px;
-  line-height: 1;
-  opacity: 0.25;
-  transition: opacity 0.15s ease;
-  filter: grayscale(0.3);
-}
-
-.habits-preview-dot--done {
-  opacity: 1;
-  filter: none;
-}
-
-.habits-preview-more {
-  font-size: 11px;
-  color: var(--color-ink-4);
-  font-weight: 500;
-  margin-left: 2px;
-}
-
-/* ─── Habits view ─────────────────────────────────────────────────────────────── */
-
-.habits-back-btn {
-  background: none;
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-btn);
-  padding: 8px 14px;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  color: var(--color-ink-3);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.15s ease;
-}
-
-.habits-back-btn:active { background: var(--color-surface-2); }
-
-.habits-section-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-ink);
-  margin-bottom: 14px;
-}
-
-/* Habit pills */
-
-.habits-pills-section {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-card);
-  padding: 20px;
-  margin-bottom: 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-}
-
-.habits-pills-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.habits-pills-date {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-ink);
-}
-
-.habits-pills-hint {
-  font-size: 11px;
+/* Push notes */
+.push-note {
+  font-size: 12px;
   color: var(--color-ink-4);
   font-style: italic;
 }
-
-.habits-pills-list {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.habit-pill {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 13px 16px;
-  background: var(--color-surface-2);
-  border: 1.5px solid var(--color-border-soft);
-  border-radius: var(--radius-btn);
-  font-family: var(--font-sans);
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
-  text-align: left;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.habit-pill:active { transform: scale(0.98); }
-
-.habit-pill--done {
-  background: color-mix(in srgb, var(--habit-color) 11%, var(--color-surface));
-  border-color: color-mix(in srgb, var(--habit-color) 30%, transparent);
-}
-
-.habit-pill-emoji { font-size: 19px; line-height: 1; flex-shrink: 0; }
-
-.habit-pill-label {
-  flex: 1;
-  font-size: 14px;
-  color: var(--color-ink-2);
-  font-weight: 400;
-}
-
-.habit-pill--done .habit-pill-label {
-  color: var(--color-ink);
-  font-weight: 500;
-}
-
-.habit-pill-check {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--habit-color);
-  width: 20px;
-  text-align: center;
-  flex-shrink: 0;
-}
-
-/* Calendar */
-
-.habits-calendar-section {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-card);
-  padding: 20px;
-  margin-bottom: 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-}
-
-.habits-calendar-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.habits-calendar-hint {
-  font-size: 11px;
-  color: var(--color-ink-4);
-  font-style: italic;
-}
-
-.habits-cal-day-labels {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  margin-bottom: 4px;
-}
-
-.habits-cal-day-label {
-  text-align: center;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--color-ink-4);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 2px 0;
-}
-
-.habits-cal-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
-}
-
-.cal-dot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  aspect-ratio: 1;
-  border-radius: 8px;
-  border: none;
-  cursor: pointer;
-  transition: transform 0.1s ease;
-  background: var(--color-surface-2);
-  padding: 0;
-  font-family: var(--font-sans);
-  -webkit-tap-highlight-color: transparent;
-}
-
-.cal-dot:disabled { cursor: default; opacity: 0.25; }
-.cal-dot:not(:disabled):active { transform: scale(0.88); }
-
-.cal-dot-day {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--color-ink-3);
-  line-height: 1;
-}
-
-.cal-dot--today .cal-dot-day { color: var(--color-ink); font-weight: 700; }
-
-.cal-dot--active {
-  outline: 2px solid var(--color-ink);
-  outline-offset: 1px;
-}
-
-/* Fill levels — scaled for visual reward */
-.cal-dot--empty  { background: var(--color-surface-2); }
-.cal-dot--low    { background: #dce7dc; }
-.cal-dot--mid    { background: #b3ccb3; }
-
-/* "Most" gets a warm sage — noticeably rewarding */
-.cal-dot--most   {
-  background: #7faa7f;
-  box-shadow: 0 1px 4px rgba(80,130,80,0.18);
-}
-.cal-dot--most .cal-dot-day { color: #fff; font-weight: 600; }
-
-/* "All" gets full celebratory treatment — warm gold ring + rich green */
-.cal-dot--full   {
-  background: linear-gradient(135deg, #5e9a5e 0%, #4a8050 100%);
-  box-shadow: 0 0 0 1.5px #c8a84b, 0 2px 6px rgba(60,110,60,0.28);
-}
-.cal-dot--full .cal-dot-day { color: #fff; font-weight: 700; }
-
-/* Legend */
-.habits-cal-legend {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border-soft);
-  justify-content: center;
-}
-
-.cal-legend-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.cal-legend-item span {
-  font-size: 10px;
-  color: var(--color-ink-4);
-}
-
-.cal-legend-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-}
-
-/* Streaks */
-
-.habits-streaks-section {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-card);
-  padding: 20px;
-  margin-bottom: 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-}
-
-.habits-streaks-list { display: flex; flex-direction: column; }
-
-.habit-streak-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--color-border-soft);
-}
-
-.habit-streak-row:last-child { border-bottom: none; }
-
-.habit-streak-emoji { font-size: 16px; line-height: 1; flex-shrink: 0; }
-
-.habit-streak-label {
-  flex: 1;
-  font-size: 13px;
-  color: var(--color-ink-2);
-}
-
-.habit-streak-badge {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  min-width: 36px;
-  justify-content: flex-end;
-}
-
-.habit-streak-badge--active .streak-flame { font-size: 14px; }
-
-.habit-streak-badge--active .streak-num {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-ink);
-}
-
-.streak-zero { font-size: 13px; color: var(--color-ink-4); }
