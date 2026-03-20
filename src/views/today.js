@@ -1,0 +1,601 @@
+import { getTodayWellnessCheckin, saveTodayWellnessCheckin } from '../services/wellness.js';
+import { getTodayJournalEntry, saveTodayJournalEntry, getRecentJournalEntries } from '../services/journal.js';
+import { touchLastActive, getLastActiveGap } from '../services/lastSeen.js';
+import { getTodayNutritionLog, saveTodayNutritionLog } from '../services/nutrition.js';
+import { getSuggestionsForEnergy } from '../data/nutrition.js';
+import { getWeekSummary } from '../services/progress.js';
+import { getTodayDisplay, truncateText, showToast } from '../utils.js';
+
+// ─── Return message copy ──────────────────────────────────────────────────────
+
+function getReturnMessage(gapHours) {
+  if (gapHours <= 48) return null;
+
+  if (gapHours > 7 * 24) {
+    return {
+      headline: `You've been away for a while.`,
+      sub: `This is your space. Take your time — no catch-up needed.`
+    };
+  }
+
+  if (gapHours > 3 * 24) {
+    return {
+      headline: `It's been a few days.`,
+      sub: `Welcome back. No pressure — just checking in when you're ready.`
+    };
+  }
+
+  // > 48 hours
+  return {
+    headline: `Good to see you again.`,
+    sub: `It's been a couple of days. Start wherever feels right.`
+  };
+}
+
+// ─── Quick check-in widget ────────────────────────────────────────────────────
+
+const MOOD_OPTIONS   = [
+  { value: 'calm',      label: 'Calm' },
+  { value: 'flat',      label: 'Flat' },
+  { value: 'good',      label: 'Good' },
+  { value: 'stretched', label: 'Stretched' }
+];
+
+const ENERGY_OPTIONS = [
+  { value: 'low',    label: 'Low' },
+  { value: 'medium', label: 'Med' },
+  { value: 'high',   label: 'High' }
+];
+
+function moodEmoji(mood) {
+  return { calm: '🌿', flat: '😶', good: '✨', stretched: '🌊' }[mood] || '';
+}
+
+function energyEmoji(energy) {
+  return { low: '🌙', medium: '☀️', high: '⚡' }[energy] || '';
+}
+
+function renderQuickCheckin(mood, energy) {
+  const bothSet = mood && energy;
+
+  if (bothSet) {
+    return `
+      <div class="qci-card qci-card--summary" id="quickCheckin">
+        <div class="qci-summary-row">
+          <div class="qci-summary-values">
+            <span class="qci-summary-item">${moodEmoji(mood)} <span class="qci-summary-label">${mood.charAt(0).toUpperCase() + mood.slice(1)}</span></span>
+            <span class="qci-summary-sep">·</span>
+            <span class="qci-summary-item">${energyEmoji(energy)} <span class="qci-summary-label">${energy.charAt(0).toUpperCase() + energy.slice(1)} energy</span></span>
+          </div>
+          <button class="qci-edit-btn" id="qciEditBtn" aria-label="Edit check-in">Edit</button>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="qci-card" id="quickCheckin">
+      <p class="qci-heading">Quick check-in</p>
+
+      <div class="qci-section">
+        <p class="qci-label">Mood</p>
+        <div class="qci-pills" role="group" aria-label="Mood">
+          ${MOOD_OPTIONS.map(o => `
+            <button type="button" class="qci-pill${mood === o.value ? ' qci-pill--selected' : ''}"
+              data-qci-group="mood" data-value="${o.value}">${o.label}</button>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="qci-section qci-section--energy">
+        <p class="qci-label">Energy</p>
+        <div class="qci-pills" role="group" aria-label="Energy">
+          ${ENERGY_OPTIONS.map(o => `
+            <button type="button" class="qci-pill${energy === o.value ? ' qci-pill--selected' : ''}"
+              data-qci-group="energy" data-value="${o.value}">${o.label}</button>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ─── Nutrition card ───────────────────────────────────────────────────────────
+
+function renderNutritionCard(energy, nutritionLog) {
+  const suggestions = getSuggestionsForEnergy(energy || 'medium', 3);
+  const { nourished, note } = nutritionLog;
+
+  const energyLabel = energy
+    ? `${energyEmoji(energy)} ${energy.charAt(0).toUpperCase() + energy.slice(1)} energy`
+    : 'Today';
+
+  return `
+    <div class="card nutrition-card" id="nutritionCard">
+      <div class="card-row">
+        <div>
+          <p class="card-label">Nourishment</p>
+          <p class="card-body mt-1">Gentle nudges, not tracking.</p>
+        </div>
+        <span class="badge nutrition-badge">${energyLabel}</span>
+      </div>
+
+      <div class="nutrition-suggestions mt-4">
+        ${suggestions.map(s => `
+          <div class="nutrition-suggestion">
+            <p class="nutrition-suggestion-label">${s.label}</p>
+            <p class="nutrition-suggestion-desc">${s.desc}</p>
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="nutrition-actions mt-4">
+        <button
+          type="button"
+          id="nourishedToggleBtn"
+          class="nutrition-toggle${nourished ? ' nutrition-toggle--done' : ''}"
+          aria-pressed="${nourished}"
+        >
+          ${nourished ? '✓ Nourished well today' : 'I nourished well today'}
+        </button>
+      </div>
+
+      <input
+        type="text"
+        id="nutritionNoteInput"
+        class="nutrition-note-input mt-3"
+        placeholder="What did you eat? (optional)"
+        value="${note ? note.replace(/"/g, '&quot;') : ''}"
+        maxlength="120"
+      />
+    </div>
+  `;
+}
+
+// ─── Option button helpers ────────────────────────────────────────────────────
+
+function getOptionClass(isSelected) {
+  return isSelected ? 'option-btn option-btn--selected' : 'option-btn';
+}
+
+function buildOptionButtons(options, selectedValue, groupName) {
+  return options.map(({ value, label }) => `
+    <button
+      type="button"
+      data-group="${groupName}"
+      data-value="${value}"
+      class="${getOptionClass(value === selectedValue)}"
+    >${label}</button>
+  `).join('');
+}
+
+function updateSelectedButtons(groupName, selectedValue) {
+  document.querySelectorAll(`[data-group="${groupName}"]`).forEach(btn => {
+    const selected = btn.dataset.value === selectedValue;
+    btn.className = getOptionClass(selected);
+  });
+}
+
+// ─── Week summary card ────────────────────────────────────────────────────────
+
+function renderWeekSummary(summary) {
+  if (!summary) {
+    return `
+      <div class="card week-summary-card" id="weekSummaryCard">
+        <p class="card-label">This week</p>
+        <p class="week-summary-empty">Your week is just beginning.</p>
+      </div>
+    `;
+  }
+
+  const { workoutsDone, journalDays, avgHydration, nourishedDays, hasAnyData } = summary;
+
+  if (!hasAnyData) {
+    return `
+      <div class="card week-summary-card" id="weekSummaryCard">
+        <p class="card-label">This week</p>
+        <p class="week-summary-empty">Your week is just beginning.</p>
+      </div>
+    `;
+  }
+
+  const stats = [
+    { icon: '🏃', value: workoutsDone, label: workoutsDone === 1 ? 'session' : 'sessions', show: true },
+    { icon: '📓', value: journalDays,  label: journalDays  === 1 ? 'entry'   : 'entries',  show: true },
+    { icon: '💧', value: avgHydration, label: 'avg glasses', show: avgHydration > 0 },
+    { icon: '🌿', value: nourishedDays, label: nourishedDays === 1 ? 'day nourished' : 'days nourished', show: nourishedDays > 0 },
+  ].filter(s => s.show);
+
+  return `
+    <div class="card week-summary-card" id="weekSummaryCard">
+      <p class="card-label">This week</p>
+      <div class="week-summary-stats">
+        ${stats.map(s => `
+          <div class="week-stat">
+            <span class="week-stat-icon">${s.icon}</span>
+            <span class="week-stat-value">${s.value}</span>
+            <span class="week-stat-label">${s.label}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+
+function renderReturnCard(returnMsg) {
+  if (!returnMsg) return '';
+  return `
+    <div class="return-card" id="returnCard" role="status" aria-live="polite">
+      <div class="return-card-inner">
+        <div class="return-card-text">
+          <p class="return-card-headline">${returnMsg.headline}</p>
+          <p class="return-card-sub">${returnMsg.sub}</p>
+        </div>
+        <button class="return-card-dismiss" id="returnCardDismiss" aria-label="Dismiss">✕</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderJournalHistory(entries) {
+  if (!entries.length) {
+    return `
+      <div class="history-empty">
+        <p>Your reflections will live here. Write your first entry above.</p>
+      </div>
+    `;
+  }
+
+  return entries.map(item => `
+    <div class="history-card">
+      <p class="history-date">${item.date}</p>
+      <p class="history-text">${truncateText(item.entry || 'No entry saved yet.')}</p>
+    </div>
+  `).join('');
+}
+
+function renderView(user, wellness, journal, recentEntries, returnMsg, nutritionLog, weekSummary) {
+  const firstName = user.displayName?.split(' ')[0] || 'there';
+
+  return `
+    <main class="view-scroll">
+      <div class="view-inner">
+
+        <header class="page-header">
+          <p class="eyebrow">Grounded</p>
+          <div class="header-row">
+            <div>
+              <h1 class="page-title">Welcome, ${firstName}</h1>
+              <p class="page-subtitle">${getTodayDisplay()}</p>
+            </div>
+            ${user.photoURL ? `
+              <img
+                src="${user.photoURL}"
+                alt="${user.displayName || 'Profile'}"
+                class="avatar"
+              />
+            ` : ''}
+          </div>
+        </header>
+
+        ${renderReturnCard(returnMsg)}
+
+        ${renderQuickCheckin(wellness.mood || '', wellness.energy || '')}
+
+        <section class="card card--hero">
+          <p class="card-label">Today</p>
+          <h2 class="card-title">Your wellness dashboard</h2>
+          <p class="card-body">A simple check-in to support your day.</p>
+        </section>
+
+        <div class="card-stack">
+
+          <!-- Hydration -->
+          <div class="card">
+            <div class="card-row">
+              <div>
+                <p class="card-label">Hydration</p>
+                <p class="card-body">Track glasses of water today.</p>
+              </div>
+              <div class="stat-block">
+                <p id="hydrationCount" class="stat-number">${wellness.hydrationGlasses || 0}</p>
+                <p class="stat-unit">glasses</p>
+              </div>
+            </div>
+            <div class="btn-row mt-4">
+              <button id="decreaseHydrationBtn" class="btn-secondary flex-1">− Remove</button>
+              <button id="increaseHydrationBtn" class="btn-primary flex-1">+ Add glass</button>
+            </div>
+          </div>
+
+          <!-- Nutrition -->
+          ${renderNutritionCard(wellness.energy || '', nutritionLog)}
+
+          <!-- Journal -->
+          <div class="card">
+            <div class="card-row">
+              <div>
+                <p class="card-label">Morning Ritual</p>
+                <p class="card-body mt-1">A quiet space to reflect and reset.</p>
+              </div>
+              <span class="badge">Journal</span>
+            </div>
+
+            <div class="prompt-block mt-4">
+              <p class="prompt-eyebrow">Today's prompt</p>
+              <p id="journalPrompt" class="prompt-text">${journal.prompt}</p>
+            </div>
+
+            <textarea
+              id="journalEntry"
+              rows="6"
+              placeholder="Write whatever is on your mind..."
+              class="textarea mt-4"
+            >${journal.entry || ''}</textarea>
+
+            <div class="btn-row mt-4">
+              <button id="saveJournalBtn" class="btn-primary flex-1">Save entry</button>
+            </div>
+            <p id="journalStatus" class="status-text mt-3"></p>
+          </div>
+
+          <!-- Journal history -->
+          <div class="card">
+            <p class="card-label">Recent entries</p>
+            <p class="card-body mt-1">A simple history of your reflections.</p>
+            <div id="journalHistory" class="history-list mt-4">
+              ${renderJournalHistory(recentEntries)}
+            </div>
+          </div>
+
+          <!-- Week summary -->
+          ${renderWeekSummary(weekSummary)}
+
+        </div>
+
+        <p id="wellnessStatus" class="status-text mt-4 px-1"></p>
+
+      </div>
+    </main>
+  `;
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+export const TodayView = {
+  async init(container, user) {
+    container.innerHTML = `<div class="loading-state"><p>Loading your dashboard…</p></div>`;
+
+    // Run data fetches and last-seen tracking in parallel
+    const [wellness, journal, recentEntries, { gapHours }, nutritionLog, weekSummary] = await Promise.all([
+      getTodayWellnessCheckin(user.uid),
+      getTodayJournalEntry(user.uid),
+      getRecentJournalEntries(user.uid),
+      getLastActiveGap(user.uid),
+      getTodayNutritionLog(user.uid),
+      getWeekSummary(user.uid)
+    ]);
+
+    // Touch lastActiveAt after reading the gap (so the gap reflects the *previous* session)
+    touchLastActive(user.uid);
+
+    // Determine return message (session-level dismiss stored in memory)
+    const returnMsg = _returnDismissed ? null : getReturnMessage(gapHours);
+
+    container.innerHTML = renderView(user, wellness, journal, recentEntries, returnMsg, nutritionLog, weekSummary);
+
+    // ── State ──
+    const wellnessState = {
+      hydrationGlasses: wellness.hydrationGlasses || 0,
+      mood: wellness.mood || '',
+      energy: wellness.energy || ''
+    };
+
+    // Nutrition state — local mirror of Firestore doc
+    const nutritionState = {
+      nourished: nutritionLog.nourished || false,
+      note:      nutritionLog.note      || ''
+    };
+
+    const hydrationCountEl = document.getElementById('hydrationCount');
+    const wellnessStatusEl = document.getElementById('wellnessStatus');
+    const journalStatusEl  = document.getElementById('journalStatus');
+    const journalEntryEl   = document.getElementById('journalEntry');
+    const journalPromptEl  = document.getElementById('journalPrompt');
+
+    // ── Return card dismiss ──
+    document.getElementById('returnCardDismiss')?.addEventListener('click', () => {
+      _returnDismissed = true;
+      const card = document.getElementById('returnCard');
+      if (card) {
+        card.classList.add('return-card--dismissing');
+        setTimeout(() => card.remove(), 350);
+      }
+    });
+
+    // ── Quick check-in widget ──
+    function rebuildQci() {
+      const qci = document.getElementById('quickCheckin');
+      if (!qci) return;
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderQuickCheckin(wellnessState.mood, wellnessState.energy);
+      const newCard = fresh.firstElementChild;
+      qci.replaceWith(newCard);
+      bindQci();
+    }
+
+    function showQciTick() {
+      const qci = document.getElementById('quickCheckin');
+      if (!qci) return;
+      qci.classList.add('qci-card--saved');
+      setTimeout(() => qci.classList.remove('qci-card--saved'), 900);
+    }
+
+    function bindQci() {
+      document.querySelectorAll('[data-qci-group]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const group = btn.dataset.qciGroup;
+          const val   = btn.dataset.value;
+          wellnessState[group] = val;
+
+          // Optimistically update pill selection
+          document.querySelectorAll(`[data-qci-group="${group}"]`).forEach(b => {
+            b.classList.toggle('qci-pill--selected', b.dataset.value === val);
+          });
+
+          try {
+            await saveTodayWellnessCheckin(user.uid, wellnessState);
+            if (wellnessState.mood && wellnessState.energy) {
+              showQciTick();
+              setTimeout(() => {
+                rebuildQci();
+                // Refresh nutrition suggestions when energy changes
+                rebuildNutritionCard();
+              }, 700);
+            }
+          } catch {
+            showToast('Save failed — try again', 'error');
+          }
+        });
+      });
+
+      document.getElementById('qciEditBtn')?.addEventListener('click', () => {
+        const qci = document.getElementById('quickCheckin');
+        if (!qci) return;
+        const fresh = document.createElement('div');
+        fresh.innerHTML = renderQuickCheckin('', '');
+        const newCard = fresh.firstElementChild;
+        qci.replaceWith(newCard);
+        bindQci();
+      });
+    }
+
+    bindQci();
+
+    // ── Nutrition card ──
+    function rebuildNutritionCard() {
+      const card = document.getElementById('nutritionCard');
+      if (!card) return;
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderNutritionCard(wellnessState.energy, nutritionState);
+      const newCard = fresh.firstElementChild;
+      card.replaceWith(newCard);
+      bindNutrition();
+    }
+
+    function bindNutrition() {
+      const toggleBtn   = document.getElementById('nourishedToggleBtn');
+      const noteInput   = document.getElementById('nutritionNoteInput');
+
+      if (!toggleBtn || !noteInput) return;
+
+      toggleBtn.addEventListener('click', async () => {
+        nutritionState.nourished = !nutritionState.nourished;
+
+        // Optimistic UI
+        toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
+        toggleBtn.setAttribute('aria-pressed', nutritionState.nourished);
+        toggleBtn.textContent = nutritionState.nourished
+          ? '✓ Nourished well today'
+          : 'I nourished well today';
+
+        try {
+          await saveTodayNutritionLog(user.uid, { nourished: nutritionState.nourished });
+          if (nutritionState.nourished) {
+            showToast('Noted — well done 🌿', 'success', 1800);
+          }
+        } catch {
+          // Rollback optimistic update
+          nutritionState.nourished = !nutritionState.nourished;
+          toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
+          toggleBtn.setAttribute('aria-pressed', nutritionState.nourished);
+          toggleBtn.textContent = nutritionState.nourished
+            ? '✓ Nourished well today'
+            : 'I nourished well today';
+          showToast('Save failed — try again', 'error');
+        }
+      });
+
+      // Save note on blur (or Enter key)
+      let _noteDebounce = null;
+
+      noteInput.addEventListener('input', () => {
+        nutritionState.note = noteInput.value;
+        clearTimeout(_noteDebounce);
+        _noteDebounce = setTimeout(async () => {
+          try {
+            await saveTodayNutritionLog(user.uid, { note: nutritionState.note });
+          } catch {
+            showToast('Note save failed — try again', 'error');
+          }
+        }, 800);
+      });
+
+      noteInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          noteInput.blur();
+        }
+      });
+    }
+
+    bindNutrition();
+
+    // ── Wellness persistence ──
+    async function persistWellness() {
+      try {
+        await saveTodayWellnessCheckin(user.uid, wellnessState);
+        showToast('Saved', 'success', 1600);
+      } catch (err) {
+        showToast('Save failed — tap to retry', 'error');
+        wellnessStatusEl.textContent = '';
+      }
+    }
+
+    // ── Hydration ──
+    document.getElementById('increaseHydrationBtn').addEventListener('click', async () => {
+      wellnessState.hydrationGlasses += 1;
+      hydrationCountEl.textContent = wellnessState.hydrationGlasses;
+      await persistWellness();
+    });
+
+    document.getElementById('decreaseHydrationBtn').addEventListener('click', async () => {
+      wellnessState.hydrationGlasses = Math.max(0, wellnessState.hydrationGlasses - 1);
+      hydrationCountEl.textContent = wellnessState.hydrationGlasses;
+      await persistWellness();
+    });
+
+    // ── Journal ──
+    document.getElementById('saveJournalBtn').addEventListener('click', async () => {
+      try {
+        journalStatusEl.textContent = 'Saving…';
+        await saveTodayJournalEntry(user.uid, {
+          prompt: journalPromptEl.textContent.trim(),
+          entry: journalEntryEl.value.trim()
+        });
+        journalStatusEl.textContent = '';
+        showToast('Journal saved', 'success', 1800);
+      } catch (err) {
+        journalStatusEl.innerHTML = `Save failed. <button class="retry-inline-btn" id="retryJournalBtn">Retry</button>`;
+        document.getElementById('retryJournalBtn')?.addEventListener('click', async () => {
+          journalStatusEl.textContent = 'Retrying…';
+          try {
+            await saveTodayJournalEntry(user.uid, {
+              prompt: journalPromptEl.textContent.trim(),
+              entry: journalEntryEl.value.trim()
+            });
+            journalStatusEl.textContent = '';
+            showToast('Journal saved', 'success', 1800);
+          } catch {
+            journalStatusEl.textContent = 'Still offline. Entry preserved.';
+          }
+        });
+      }
+    });
+  }
+};
+
+// Session-level dismiss flag — lives in module scope (reset on full page reload)
+let _returnDismissed = false;
