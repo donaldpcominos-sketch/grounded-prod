@@ -1,9 +1,7 @@
 import { getTodayWellnessCheckin, saveTodayWellnessCheckin } from '../services/wellness.js';
-import { getTodayJournalEntry } from '../services/journal.js';
 import { touchLastActive, getLastActiveGap } from '../services/lastSeen.js';
-import { getTodayNutritionLog, saveTodayNutritionLog } from '../services/nutrition.js';
 import { getSuggestionsForEnergy } from '../data/nutrition.js';
-import { getTodayDisplay, showToast } from '../utils.js';
+import { getTodayDisplay, getTodayKey, showToast } from '../utils.js';
 import { fetchWeather } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
 import { getTodayWorkoutSession } from '../services/workouts.js';
@@ -65,13 +63,12 @@ function renderWeatherCard(weather) {
 
 function getReturnMessage(gapHours) {
   if (gapHours <= 48) return null;
-  if (gapHours > 7 * 24) return { headline: `You've been away for a while.`, sub: `This is your space. Take your time \u2014 no catch-up needed.` };
-  if (gapHours > 3 * 24) return { headline: `It's been a few days.`, sub: `Welcome back. No pressure \u2014 just checking in when you're ready.` };
-  return { headline: `Good to see you again.`, sub: `It's been a couple of days. Start wherever feels right.` };
+  if (gapHours > 7 * 24) return { headline: 'You\u2019ve been away for a while.', sub: 'This is your space. Take your time \u2014 no catch-up needed.' };
+  if (gapHours > 3 * 24) return { headline: 'It\u2019s been a few days.', sub: 'Welcome back. No pressure \u2014 just checking in when you\u2019re ready.' };
+  return { headline: 'Good to see you again.', sub: 'It\u2019s been a couple of days. Start wherever feels right.' };
 }
 
 // ─── Quick check-in ───────────────────────────────────────────────────────────
-// Redesigned: large emoji-button grid, no text labels, much warmer feel
 
 const MOOD_OPTIONS = [
   { value: 'calm',      emoji: '🌿', label: 'Calm'      },
@@ -108,7 +105,6 @@ function renderQuickCheckin(mood, energy) {
   return `
     <div class="qci-card" id="quickCheckin">
       <p class="qci-heading">How are you today?</p>
-
       <div class="qci-group">
         ${MOOD_OPTIONS.map(o => `
           <button type="button"
@@ -121,9 +117,7 @@ function renderQuickCheckin(mood, energy) {
           </button>
         `).join('')}
       </div>
-
       <div class="qci-divider"></div>
-
       <div class="qci-group qci-group--energy">
         ${ENERGY_OPTIONS.map(o => `
           <button type="button"
@@ -140,30 +134,27 @@ function renderQuickCheckin(mood, energy) {
   `;
 }
 
-// ─── Nutrition card ───────────────────────────────────────────────────────────
+// ─── Nourishment card (prompts only, no tracking) ─────────────────────────────
 
 function energyEmoji(energy) {
   return { low: '🌙', medium: '☀️', high: '⚡' }[energy] || '';
 }
 
-function renderNutritionCard(energy, nutritionLog) {
+function renderNourishmentCard(energy) {
   const suggestions = getSuggestionsForEnergy(energy || 'medium', 3);
-  const { nourished, note } = nutritionLog;
-
   const energyLabel = energy
     ? `${energyEmoji(energy)} ${energy.charAt(0).toUpperCase() + energy.slice(1)} energy`
     : 'Today';
 
   return `
-    <div class="card nutrition-card" id="nutritionCard">
+    <div class="card" id="nourishmentCard">
       <div class="card-row">
         <div>
           <p class="card-label">Nourishment</p>
-          <p class="card-body mt-1">Gentle nudges, not tracking.</p>
+          <p class="card-body mt-1">Ideas to eat well today.</p>
         </div>
-        <span class="badge nutrition-badge">${energyLabel}</span>
+        <span class="badge">${energyLabel}</span>
       </div>
-
       <div class="nutrition-suggestions mt-4">
         ${suggestions.map(s => `
           <div class="nutrition-suggestion">
@@ -172,26 +163,6 @@ function renderNutritionCard(energy, nutritionLog) {
           </div>
         `).join('')}
       </div>
-
-      <div class="nutrition-actions mt-4">
-        <button
-          type="button"
-          id="nourishedToggleBtn"
-          class="nutrition-toggle${nourished ? ' nutrition-toggle--done' : ''}"
-          aria-pressed="${nourished}"
-        >
-          ${nourished ? '\u2713 Nourished well today' : 'I nourished well today'}
-        </button>
-      </div>
-
-      <input
-        type="text"
-        id="nutritionNoteInput"
-        class="nutrition-note-input mt-3"
-        placeholder="What did you eat? (optional)"
-        value="${note ? note.replace(/"/g, '&quot;') : ''}"
-        maxlength="120"
-      />
     </div>
   `;
 }
@@ -218,7 +189,7 @@ function renderWorkoutTile(savedSession) {
   if (isDone && isAlternate) {
     statusLine = `<span class="workout-tile-done workout-tile-done--alt">\u2713 ${savedSession.alternateLabel || 'Activity'} done</span>`;
   } else if (isDone) {
-    statusLine = `<span class="workout-tile-done">\u2713 Done today</span>`;
+    statusLine = '<span class="workout-tile-done">\u2713 Done today</span>';
   }
 
   return `
@@ -243,9 +214,10 @@ function renderHabitsTile(todayHabits) {
   const doneCount = HABITS.filter(h => todayHabits[h.id] === true).length;
   const total     = HABITS.length;
   const allDone   = doneCount === total;
-  const pct       = total > 0 ? Math.round((doneCount / total) * 100) : 0;
-
-  const previewHabits = HABITS.slice(0, 5);
+  // Progress as fraction of circumference: circle r=14, circumference=87.96
+  // We use a viewBox-independent approach: stroke-dasharray out of 87.96
+  const circ      = 87.96;
+  const filled    = total > 0 ? (doneCount / total) * circ : 0;
 
   return `
     <button class="habits-entry-tile" id="habitsTileBtn" aria-label="Open habits tracker">
@@ -256,23 +228,24 @@ function renderHabitsTile(todayHabits) {
         </div>
         <div class="habits-tile-right">
           <div class="habits-tile-ring">
-            <svg viewBox="0 0 36 36" class="habits-ring-svg">
-              <circle class="habits-ring-bg" cx="18" cy="18" r="14"/>
-              <circle class="habits-ring-fill" cx="18" cy="18" r="14"
-                stroke-dasharray="${(pct * 0.879).toFixed(1)} 100"
-                stroke="${allDone ? '#5a7a5a' : 'var(--color-ink-2)'}"/>
+            <svg width="42" height="42" viewBox="0 0 36 36" class="habits-ring-svg">
+              <circle class="habits-ring-bg" cx="18" cy="18" r="14" fill="none"/>
+              <circle class="habits-ring-fill" cx="18" cy="18" r="14" fill="none"
+                stroke="${allDone ? '#5a7a5a' : 'var(--color-ink-2)'}"
+                stroke-dasharray="${filled.toFixed(2)} ${circ.toFixed(2)}"
+                stroke-dashoffset="0"/>
             </svg>
             ${allDone
               ? '<span class="habits-ring-check">\u2713</span>'
-              : `<span class="habits-ring-pct">${pct}%</span>`}
+              : `<span class="habits-ring-pct">${Math.round((doneCount/total)*100)}%</span>`}
           </div>
           <span class="workout-tile-arrow">\u2192</span>
         </div>
       </div>
       <div class="habits-tile-preview">
-        ${previewHabits.map(h => {
+        ${HABITS.slice(0, 5).map(h => {
           const done = todayHabits[h.id] === true;
-          return `<span class="habits-preview-dot${done ? ' habits-preview-dot--done' : ''}" style="--habit-color:${h.color}" aria-hidden="true">${h.emoji}</span>`;
+          return `<span class="habits-preview-dot${done ? ' habits-preview-dot--done' : ''}" aria-hidden="true">${h.emoji}</span>`;
         }).join('')}
         ${total > 5 ? `<span class="habits-preview-more">+${total - 5}</span>` : ''}
       </div>
@@ -297,7 +270,7 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-function renderView(user, wellness, returnMsg, nutritionLog, weather, savedSession, todayHabits) {
+function renderView(user, wellness, returnMsg, weather, savedSession, todayHabits) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -322,7 +295,7 @@ function renderView(user, wellness, returnMsg, nutritionLog, weather, savedSessi
         <div class="card-stack">
           ${renderWorkoutTile(savedSession)}
           ${renderHabitsTile(todayHabits)}
-          ${renderNutritionCard(wellness.energy || '', nutritionLog)}
+          ${renderNourishmentCard(wellness.energy || '')}
         </div>
 
         <p id="wellnessStatus" class="status-text mt-4 px-1"></p>
@@ -338,14 +311,11 @@ export const TodayView = {
   async init(container, user) {
     container.innerHTML = '<div class="loading-state"><p>Loading your dashboard\u2026</p></div>';
 
-    const { getTodayKey } = await import('../utils.js');
     const todayKey = getTodayKey();
 
-    const [wellness, , { gapHours }, nutritionLog, weather, savedSession, todayHabits] = await Promise.all([
+    const [wellness, { gapHours }, weather, savedSession, todayHabits] = await Promise.all([
       getTodayWellnessCheckin(user.uid),
-      getTodayJournalEntry(user.uid),
       getLastActiveGap(user.uid),
-      getTodayNutritionLog(user.uid),
       fetchWeather().catch(() => null),
       getTodayWorkoutSession(user.uid).catch(() => null),
       getHabitLog(user.uid, todayKey).catch(() => ({}))
@@ -355,19 +325,12 @@ export const TodayView = {
 
     const returnMsg = _returnDismissed ? null : getReturnMessage(gapHours);
 
-    container.innerHTML = renderView(user, wellness, returnMsg, nutritionLog, weather, savedSession, todayHabits);
+    container.innerHTML = renderView(user, wellness, returnMsg, weather, savedSession, todayHabits);
 
     const wellnessState = {
       mood:   wellness.mood   || '',
       energy: wellness.energy || ''
     };
-
-    const nutritionState = {
-      nourished: nutritionLog.nourished || false,
-      note:      nutritionLog.note      || ''
-    };
-
-    const wellnessStatusEl = document.getElementById('wellnessStatus');
 
     // ── Return card ──
     document.getElementById('returnCardDismiss')?.addEventListener('click', () => {
@@ -399,6 +362,14 @@ export const TodayView = {
       bindQci();
     }
 
+    function rebuildNourishmentCard() {
+      const card = document.getElementById('nourishmentCard');
+      if (!card) return;
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderNourishmentCard(wellnessState.energy);
+      card.replaceWith(fresh.firstElementChild);
+    }
+
     function showQciTick() {
       const qci = document.getElementById('quickCheckin');
       if (!qci) return;
@@ -415,7 +386,7 @@ export const TodayView = {
 
           document.querySelectorAll(`[data-qci-group="${group}"]`).forEach(b => {
             b.classList.toggle('qci-btn--selected', b.dataset.value === val);
-            b.setAttribute('aria-pressed', b.dataset.value === val);
+            b.setAttribute('aria-pressed', String(b.dataset.value === val));
           });
 
           try {
@@ -424,7 +395,7 @@ export const TodayView = {
               showQciTick();
               setTimeout(() => {
                 rebuildQci();
-                rebuildNutritionCard();
+                rebuildNourishmentCard();
               }, 700);
             }
           } catch {
@@ -444,55 +415,6 @@ export const TodayView = {
     }
 
     bindQci();
-
-    // ── Nutrition card ──
-    function rebuildNutritionCard() {
-      const card = document.getElementById('nutritionCard');
-      if (!card) return;
-      const fresh = document.createElement('div');
-      fresh.innerHTML = renderNutritionCard(wellnessState.energy, nutritionState);
-      card.replaceWith(fresh.firstElementChild);
-      bindNutrition();
-    }
-
-    function bindNutrition() {
-      const toggleBtn = document.getElementById('nourishedToggleBtn');
-      const noteInput = document.getElementById('nutritionNoteInput');
-      if (!toggleBtn || !noteInput) return;
-
-      toggleBtn.addEventListener('click', async () => {
-        nutritionState.nourished = !nutritionState.nourished;
-        toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
-        toggleBtn.setAttribute('aria-pressed', String(nutritionState.nourished));
-        toggleBtn.textContent = nutritionState.nourished ? '\u2713 Nourished well today' : 'I nourished well today';
-
-        try {
-          await saveTodayNutritionLog(user.uid, { nourished: nutritionState.nourished });
-          if (nutritionState.nourished) showToast('Noted \u2014 well done \uD83C\uDF3F', 'success', 1800);
-        } catch {
-          nutritionState.nourished = !nutritionState.nourished;
-          toggleBtn.classList.toggle('nutrition-toggle--done', nutritionState.nourished);
-          toggleBtn.setAttribute('aria-pressed', String(nutritionState.nourished));
-          toggleBtn.textContent = nutritionState.nourished ? '\u2713 Nourished well today' : 'I nourished well today';
-          showToast('Save failed \u2014 try again', 'error');
-        }
-      });
-
-      let _noteDebounce = null;
-      noteInput.addEventListener('input', () => {
-        nutritionState.note = noteInput.value;
-        clearTimeout(_noteDebounce);
-        _noteDebounce = setTimeout(async () => {
-          try { await saveTodayNutritionLog(user.uid, { note: nutritionState.note }); }
-          catch { showToast('Note save failed \u2014 try again', 'error'); }
-        }, 800);
-      });
-      noteInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); noteInput.blur(); }
-      });
-    }
-
-    bindNutrition();
   }
 };
 
