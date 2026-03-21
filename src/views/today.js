@@ -59,20 +59,24 @@ const COPY = {
   [TODAY_STATES.SURVIVAL]: {
     headline:    'Today is a survival day',
     reassurance: 'Nothing about today needs to be perfect.',
+    status:      'Today has been reduced.',
   },
   [TODAY_STATES.LOW_CAPACITY]: {
     headline:    'Take it gently today',
     reassurance: 'One small thing is enough. A short stretch might help.',
+    status:      'Only what matters is kept.',
   },
   [TODAY_STATES.STABLE]: {
     headline:    'You might have a little more space today',
     reassurance: 'If it feels right, a bit of fresh air could help.',
+    status:      'A little more space is here.',
   },
 };
 
 const NIGHT_COPY = {
   headline:    'Still here with you',
   reassurance: 'Nothing needs doing. Rest if you can.',
+  status:      null,
 };
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
@@ -125,6 +129,7 @@ export function renderToday({ state, isNight }) {
           ${showDate ? `<p class="today-eyebrow">${getTodayDisplay()}</p>` : ''}
           <h1 class="today-headline">${copy.headline}</h1>
           <p class="today-reassurance">${copy.reassurance}</p>
+          ${copy.status ? `<p class="today-status">${copy.status}</p>` : ''}
         </header>
 
       </div>

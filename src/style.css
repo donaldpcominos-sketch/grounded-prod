@@ -4220,3 +4220,13 @@ body {
 .today-surface--night .today-reassurance {
   font-size: 14px;
 }
+
+/* ── System status — passive, ambient, same flow as reassurance ──────────────── */
+
+.today-status {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--today-ink-dim);
+  font-weight: 400;
+  margin-top: -4px;
+}
