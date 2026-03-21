@@ -17,8 +17,8 @@
  *   - All variants read as: this is enough as it is
  */
 
-import { STATES } from '../services/stateEngine.js';
-import { CONTINUITY_TAGS } from '../services/patternEngine.js';
+
+
 
 // ─── Map ──────────────────────────────────────────────────────────────────────
 
@@ -26,8 +26,8 @@ export const TODAY_COPY_MAP = Object.freeze({
 
   // ── SURVIVAL ──────────────────────────────────────────────────────────────
 
-  [STATES.SURVIVAL]: {
-    [CONTINUITY_TAGS.SUSTAINED_HARD]: {
+  'SURVIVAL': {
+    'SUSTAINED_HARD': {
       base: {
         headline:    'Today is a survival day',
         reassurance: 'There\'s nothing that needs doing right now.',
@@ -44,7 +44,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.DECLINING]: {
+    'DECLINING': {
       base: {
         headline:    'Today is a hard day',
         reassurance: 'That\'s all this needs to be.',
@@ -61,7 +61,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.NEUTRAL]: {
+    'NEUTRAL': {
       base: {
         headline:    'Today is a survival day',
         reassurance: 'This is enough.',
@@ -78,7 +78,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.IMPROVING]: {
+    'IMPROVING': {
       base: {
         headline:    'Today is harder',
         reassurance: 'That\'s allowed.',
@@ -95,7 +95,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.SUSTAINED_STABLE]: {
+    'SUSTAINED_STABLE': {
       base: {
         headline:    'Today is a harder day',
         reassurance: 'Even stable periods have hard days.',
@@ -116,8 +116,8 @@ export const TODAY_COPY_MAP = Object.freeze({
 
   // ── LOW_CAPACITY ──────────────────────────────────────────────────────────
 
-  [STATES.LOW_CAPACITY]: {
-    [CONTINUITY_TAGS.SUSTAINED_HARD]: {
+  'LOW_CAPACITY': {
+    'SUSTAINED_HARD': {
       base: {
         headline:    'Today is a low-capacity day',
         reassurance: 'Low capacity is still capacity.',
@@ -134,7 +134,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.DECLINING]: {
+    'DECLINING': {
       base: {
         headline:    'Today is a heavy day',
         reassurance: 'That\'s not a failure.',
@@ -151,7 +151,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.IMPROVING]: {
+    'IMPROVING': {
       base: {
         headline:    'Today is a low-capacity day',
         reassurance: 'This is enough.',
@@ -168,7 +168,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.SUSTAINED_STABLE]: {
+    'SUSTAINED_STABLE': {
       base: {
         headline:    'Today is a low-capacity day',
         reassurance: 'This is enough as it is.',
@@ -185,7 +185,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.NEUTRAL]: {
+    'NEUTRAL': {
       base: {
         headline:    'Today is a low-capacity day',
         reassurance: 'This is enough.',
@@ -206,8 +206,8 @@ export const TODAY_COPY_MAP = Object.freeze({
 
   // ── STABLE ────────────────────────────────────────────────────────────────
 
-  [STATES.STABLE]: {
-    [CONTINUITY_TAGS.SUSTAINED_STABLE]: {
+  'STABLE': {
+    'SUSTAINED_STABLE': {
       base: {
         headline:    'Today feels like today',
         reassurance: 'This is enough as it is.',
@@ -224,7 +224,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.IMPROVING]: {
+    'IMPROVING': {
       base: {
         headline:    'Today is a stable day',
         reassurance: 'There\'s capacity here.',
@@ -241,7 +241,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.NEUTRAL]: {
+    'NEUTRAL': {
       base: {
         headline:    'Today is here',
         reassurance: 'There\'s capacity here.',
@@ -258,7 +258,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.DECLINING]: {
+    'DECLINING': {
       base: {
         headline:    'Today is what it is',
         reassurance: 'Capacity isn\'t constant.',
@@ -275,7 +275,7 @@ export const TODAY_COPY_MAP = Object.freeze({
         status:      null,
       },
     },
-    [CONTINUITY_TAGS.SUSTAINED_HARD]: {
+    'SUSTAINED_HARD': {
       base: {
         headline:    'Today is a stable day',
         reassurance: 'This is what today is.',
