@@ -192,6 +192,86 @@ export function renderToday({ state, isNight, continuityTag = CONTINUITY_TAGS.NE
   `;
 }
 
+// ─── Expanded copy ────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the single expanded copy line shown on tap-expand.
+ * Deterministic. Keyed by tone, with continuityTag as secondary signal.
+ * No async. No new data fetching.
+ *
+ * @param {{ tone: string, continuityTag: string, isNight: boolean }} payload
+ * @returns {string}
+ */
+function resolveExpandedCopy({ tone, continuityTag, isNight }) {
+  if (isNight) return 'Rest is its own kind of work.';
+
+  // Secondary refinement for SUSTAINED_HARD regardless of tone
+  if (continuityTag === CONTINUITY_TAGS.SUSTAINED_HARD) {
+    return 'Hard stretches don\'t require explanations.';
+  }
+
+  switch (tone) {
+    case 'GENTLE':   return 'You\'re doing more than it feels like.';
+    case 'GROUNDED': return 'It does not all need to move at once.';
+    case 'OPEN':     return 'There\'s room in this.';
+    case 'STEADY':
+    default:         return 'One thing at a time is enough.';
+  }
+}
+
+// ─── Expansion behaviour ──────────────────────────────────────────────────────
+
+/**
+ * Attach tap-expand / tap-collapse to the rendered Today surface.
+ * Local UI state only — resets on every init() call.
+ * No new routes. No async. No data fetching.
+ *
+ * @param {HTMLElement} container
+ * @param {{ tone: string, continuityTag: string, isNight: boolean }} payload
+ */
+function attachExpansion(container, payload) {
+  // Local state — resets on every init (covers reload + background)
+  let isExpanded = false;
+
+  const surface = container.querySelector('.today-surface');
+  if (!surface) return;
+
+  // Inject the hidden expanded block into the DOM once — never re-create it
+  const inner = surface.querySelector('.today-inner');
+  if (!inner) return;
+
+  const expandedCopy = resolveExpandedCopy(payload);
+
+  const expandBlock = document.createElement('p');
+  expandBlock.className = 'today-expanded-line';
+  expandBlock.textContent = expandedCopy;
+  inner.appendChild(expandBlock);
+
+  // ── Expand / collapse ──────────────────────────────────────────────────────
+
+  function expand() {
+    if (isExpanded) return;
+    isExpanded = true;
+    surface.classList.add('today-surface--expanded');
+    expandBlock.classList.add('today-expanded-line--visible');
+  }
+
+  function collapse() {
+    if (!isExpanded) return;
+    isExpanded = false;
+    surface.classList.remove('today-surface--expanded');
+    expandBlock.classList.remove('today-expanded-line--visible');
+  }
+
+  // ── Tap: toggle ────────────────────────────────────────────────────────────
+  // Scroll-collapse is not used: Today's content is short enough that
+  // the surface scroll container will rarely have overflow, so scroll
+  // events are unreliable as a collapse trigger. Tap-toggle is sufficient.
+  surface.addEventListener('click', () => {
+    isExpanded ? collapse() : expand();
+  }, { passive: true });
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 export const TodayView = {
@@ -209,6 +289,7 @@ export const TodayView = {
     if (cacheUsable) {
       // Synchronous render from cache — no async, no visible loading state
       container.innerHTML = renderTodayFromPayload(cachedPayload);
+      attachExpansion(container, cachedPayload);
     } else {
       // Cache miss (first visit or new day) — render a safe deterministic
       // placeholder payload immediately. No loading state, no spinner.
@@ -226,6 +307,7 @@ export const TodayView = {
         atRiskOfDrift:   false,
       });
       container.innerHTML = renderTodayFromPayload(fallbackPayload);
+      attachExpansion(container, fallbackPayload);
     }
 
     // ── Phase 4: session tracking ──────────────────────────────────────────────
@@ -353,6 +435,7 @@ export const TodayView = {
     } else {
       // Render fresh payload
       container.innerHTML = renderTodayFromPayload(freshPayload);
+      attachExpansion(container, freshPayload);
     }
 
     // Update cache for next visit
