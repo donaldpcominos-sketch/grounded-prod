@@ -1,5 +1,5 @@
 /**
- * services/stateEngine.js — State Engine v3
+ * services/stateEngine.js — State Engine v4
  *
  * Passive signal collection, state inference, smoothing, confidence thresholds.
  * Called from today.js. Writes to users/{userId}/todayState/{dateKey}.
@@ -14,6 +14,11 @@
  *   - resolveAndPersistState returns continuityTag and tone
  *   - History read delegated to historyStore
  *   - patternEngine and toneEngine consulted after state resolution
+ *
+ * Phase 4 additions:
+ *   - deriveContinuityTag swapped to deriveContinuityTagV2 (confidence-gated)
+ *   - tone derived via driftEngine.deriveTone (includes drift awareness)
+ *   - previousContinuityTag threaded through for stability
  */
 
 import { db } from '../lib/firebase.js';
@@ -22,9 +27,13 @@ import { getTodayKey } from '../utils.js';
 
 // ─── Phase 3 services ─────────────────────────────────────────────────────────
 
-import { getRecentHistory }     from './historyStore.js';
-import { deriveContinuityTag }  from './patternEngine.js';
-import { resolveTone }          from './toneEngine.js';
+import { getRecentHistory }              from './historyStore.js';
+import { CONTINUITY_TAGS }               from './patternEngine.js';
+
+// ─── Phase 4 services ─────────────────────────────────────────────────────────
+
+import { deriveContinuityTagV2 }         from './continuityEngine.js';
+import { deriveTone }                    from './driftEngine.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -36,9 +45,9 @@ export const STATES = Object.freeze({
 
 // Confidence thresholds — STABLE requires passing all three
 const STABLE_THRESHOLDS = {
-  minHabitRatio:    0.6,   // at least 60% of habits done
-  maxGapHours:      36,    // seen within 1.5 days
-  minSmoothScore:   1,     // at least 1 previous stable/low_capacity day in last 3
+  minHabitRatio:  0.6,  // at least 60% of habits done
+  maxGapHours:    36,   // seen within 1.5 days
+  minSmoothScore: 1,    // at least 1 previous stable/low_capacity day in last 3
 };
 
 // Night window: 00:00–05:00
@@ -79,6 +88,7 @@ async function getRecentStates(userId, daysBack = 3) {
 
 /**
  * Smoothing score: count of recent days that were not SURVIVAL.
+ * Used to prevent STABLE from snapping on after a hard run.
  */
 function computeSmoothScore(recentStates) {
   return recentStates.filter(s => s !== STATES.SURVIVAL).length;
@@ -90,9 +100,9 @@ function computeSmoothScore(recentStates) {
  * Infer state from passive signals.
  *
  * @param {{
- *   gapHours: number,
+ *   gapHours:        number,
  *   habitsDoneRatio: number,
- *   smoothScore: number,
+ *   smoothScore:     number,
  * }} signals
  * @param {Date} now
  * @returns {string} STATES value
@@ -110,7 +120,7 @@ export function inferState(signals, now = new Date()) {
   // STABLE — requires multiple positive signals AND smoothing
   if (
     habitsDoneRatio >= STABLE_THRESHOLDS.minHabitRatio &&
-    gapHours       <  STABLE_THRESHOLDS.maxGapHours    &&
+    gapHours        < STABLE_THRESHOLDS.maxGapHours    &&
     smoothScore    >= STABLE_THRESHOLDS.minSmoothScore
   ) {
     return STATES.STABLE;
@@ -141,10 +151,13 @@ export async function getCachedTodayState(userId) {
 
 /**
  * Write the resolved state to todayState and dailySignals.
+ *
+ * todayState/{dateKey}   — current state + metadata
+ * dailySignals/{dateKey} — passive signal snapshot for aggregation
  */
 export async function writeTodayState(userId, state, signals = {}) {
   const dateKey = getTodayKey();
-  const now = new Date();
+  const now     = new Date();
 
   try {
     await setDoc(
@@ -152,10 +165,10 @@ export async function writeTodayState(userId, state, signals = {}) {
       {
         state,
         computedAt: serverTimestamp(),
-        hour: now.getHours(),
-        isNight: isNightWindow(now),
-        ...( signals.gapHours        !== undefined && { gapHours:        signals.gapHours }),
-        ...( signals.habitsDoneRatio !== undefined && { habitsDoneRatio: signals.habitsDoneRatio }),
+        hour:       now.getHours(),
+        isNight:    isNightWindow(now),
+        ...(signals.gapHours        !== undefined && { gapHours:        signals.gapHours }),
+        ...(signals.habitsDoneRatio !== undefined && { habitsDoneRatio: signals.habitsDoneRatio }),
       },
       { merge: true }
     );
@@ -168,10 +181,10 @@ export async function writeTodayState(userId, state, signals = {}) {
       doc(db, 'users', userId, 'dailySignals', dateKey),
       {
         dateKey,
-        lastUpdated:      serverTimestamp(),
-        gapHours:         signals.gapHours        ?? null,
-        habitsDoneRatio:  signals.habitsDoneRatio  ?? null,
-        resolvedState:    state,
+        lastUpdated:     serverTimestamp(),
+        gapHours:        signals.gapHours        ?? null,
+        habitsDoneRatio: signals.habitsDoneRatio  ?? null,
+        resolvedState:   state,
       },
       { merge: true }
     );
@@ -180,11 +193,41 @@ export async function writeTodayState(userId, state, signals = {}) {
   }
 }
 
+// ─── Read last committed continuityTag ───────────────────────────────────────
+
+/**
+ * Read the most recently committed continuityTag from dailyHistory.
+ * Used to seed deriveContinuityTagV2 so low-confidence days don't churn.
+ * Returns NEUTRAL on any failure.
+ *
+ * @param {string} userId
+ * @returns {Promise<string>}
+ */
+async function getLastContinuityTag(userId) {
+  const now = new Date();
+  for (let i = 1; i <= 3; i++) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    try {
+      const snap = await getDoc(doc(db, 'users', userId, 'dailyHistory', key));
+      if (snap.exists()) {
+        const tag = snap.data().continuityTag;
+        if (tag) return tag;
+      }
+    } catch {
+      // Non-critical
+    }
+  }
+  return CONTINUITY_TAGS.NEUTRAL;
+}
+
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 /**
  * Compute and persist today's state from raw signals.
- * Phase 3: also derives continuityTag and tone from recent history.
+ * Phase 4: uses deriveContinuityTagV2 (confidence-gated) and
+ * deriveTone from driftEngine (drift-aware).
  *
  * @param {string} userId
  * @param {{ gapHours: number, habitsDoneRatio: number }} rawSignals
@@ -202,7 +245,7 @@ export async function resolveAndPersistState(userId, rawSignals, now = new Date(
   let smoothScore = 0;
   try {
     const recent = await getRecentStates(userId, 3);
-    smoothScore = computeSmoothScore(recent);
+    smoothScore  = computeSmoothScore(recent);
   } catch {
     smoothScore = 0;
   }
@@ -214,15 +257,27 @@ export async function resolveAndPersistState(userId, rawSignals, now = new Date(
   // Fire-and-forget persist (Phase 2 writes)
   writeTodayState(userId, state, rawSignals).catch(() => null);
 
-  // ── Phase 3: derive continuity context ──────────────────────────────────────
+  // ── Phase 4: derive continuity context ──────────────────────────────────────
 
-  let continuityTag = 'NEUTRAL';
+  let continuityTag = CONTINUITY_TAGS.NEUTRAL;
   let tone          = 'STEADY';
 
   try {
-    const history = await getRecentHistory(userId, 7);
-    continuityTag = deriveContinuityTag(history);
-    tone = resolveTone({ state, continuityTag, nightOpen: isNight });
+    const [history, previousTag] = await Promise.all([
+      getRecentHistory(userId, 7),
+      getLastContinuityTag(userId),
+    ]);
+
+    // Phase 4: confidence-gated derivation — preserves previousTag when uncertain
+    continuityTag = deriveContinuityTagV2(history, rawSignals, previousTag);
+
+    // Phase 4: drift-aware tone derivation
+    tone = deriveTone({
+      resolvedState: state,
+      continuityTag,
+      isNight,
+      atRiskOfDrift: (rawSignals.gapHours ?? 0) > 18,
+    });
   } catch {
     // Non-critical — fall through with defaults
   }
