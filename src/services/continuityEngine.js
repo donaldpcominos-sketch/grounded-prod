@@ -24,9 +24,9 @@ import {
 // ─── State numeric weight ─────────────────────────────────────────────────────
 
 const STATE_WEIGHT = {
-  [STATES.SURVIVAL]:     0,
-  [STATES.LOW_CAPACITY]: 1,
-  [STATES.STABLE]:       2,
+  'SURVIVAL':     0,
+  'LOW_CAPACITY': 1,
+  'STABLE':       2,
 };
 
 function weightOf(state) {
