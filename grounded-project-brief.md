@@ -72,6 +72,7 @@ GroundedApp/           ← root (also the GitHub Desktop repo folder)
       nico.js
       nutrition.js
       notifications.js  ← FCM token + reminder prefs (Chunk 11)
+      shopping.js       ← solo + shared shopping list
     views/
       today.js
       workouts.js
@@ -79,6 +80,7 @@ GroundedApp/           ← root (also the GitHub Desktop repo folder)
       profile.js
       nico.js
       onboarding.js
+      shopping.js
   functions/
     scheduleDailyReminders.js  ← Firebase Cloud Function (not yet deployed)
 ```
@@ -114,10 +116,12 @@ users/{userId}
   .onboardedAt
   .bannedExercises[]
   .nicoAgeMonths (number | null)
+  .nicoBirthday ('YYYY-MM-DD' | null)   ← added Chunk C
   .lastActiveAt (timestamp)
   .reminderEnabled (bool)
-  .reminderTime ('HH:MM')
+  .reminderTime ('HH:MM')               ← default '20:00'
   .fcmToken (string | null)
+  .sharedListId (string | null)         ← 6-char code of linked shared list
 
 users/{userId}/wellnessCheckins/{date}
 users/{userId}/journalEntries/{date}
@@ -128,15 +132,67 @@ users/{userId}/nicoLogs/{date}
 users/{userId}/nutritionLogs/{date}
   .nourished (bool)
   .note (string)
+users/{userId}/shoppingList/{itemId}
+  .text, .ticked, .createdAt
+
+sharedLists/{listId}
+  .members[]               ← [uid1, uid2]
+  .createdAt
+sharedLists/{listId}/items/{itemId}
+  .text, .ticked, .createdAt
 ```
 
 ---
 
 ## Firestore security rules
 
+**Current rules (updated Chunk A — paste these into Firebase Console):**
+
 ```
-match /users/{userId}/{document=**} {
-  allow read, write: if request.auth != null && request.auth.uid == userId;
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Per-user data — only the owner can read/write
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Shared shopping lists
+    match /sharedLists/{listId} {
+
+      // Any signed-in user can read a single list doc (needed to validate a join code)
+      allow get: if request.auth != null;
+
+      // Only members can query the collection
+      allow list: if request.auth != null
+        && request.auth.uid in resource.data.members;
+
+      // Members can update or delete
+      allow update, delete: if request.auth != null
+        && request.auth.uid in resource.data.members;
+
+      // Allow creating a new list
+      allow create: if request.auth != null
+        && request.auth.uid in request.resource.data.members;
+
+      // Allow a non-member to join — they can only add their own UID to members,
+      // the list must have fewer than 2 members, and nothing else changes
+      allow update: if request.auth != null
+        && resource.data.members.size() < 2
+        && request.resource.data.members.hasAll(resource.data.members)
+        && request.resource.data.members.size() == resource.data.members.size() + 1
+        && request.auth.uid in request.resource.data.members;
+
+      // Items subcollection — members only
+      match /items/{itemId} {
+        allow read, write: if request.auth != null
+          && exists(/databases/$(database)/documents/sharedLists/$(listId))
+          && request.auth.uid in get(/databases/$(database)/documents/sharedLists/$(listId)).data.members;
+      }
+    }
+
+  }
 }
 ```
 
@@ -158,6 +214,94 @@ match /users/{userId}/{document=**} {
 | 10 | Nico age-awareness + activity filtering | ✅ DONE |
 | 11 | Push notifications (daily reminder) | ✅ DONE (Cloud Function not yet deployed) |
 | 12 | Production readiness pass + polish | ✅ DONE |
+| A | Fix shared shopping list (Firestore rules) | ✅ DONE — Firebase Console only, no code change |
+
+---
+
+## Upcoming chunks
+
+| Chunk | What | Size |
+|---|---|---|
+| B | Habits overhaul + 8pm reminder default | Medium |
+| C | Nico improvements (nap stats, birthday picker, solids guide) | Medium |
+| D | Workout fixes (push-day bug, week preview, day-swap) | Medium-Large |
+| E | Today page audit (safe walking times, wellness suggestion) | Small-Medium |
+| F | Book tracker (new module) | Large |
+| G | Nutrition overhaul — session 1: macro onboarding + foods | Large |
+| G2 | Nutrition overhaul — session 2: meal plan + swap + feedback | Large |
+| H | Structural / multi-user refactor (baby tracker toggle, etc.) | Large |
+
+---
+
+## Chunk A notes — Shared shopping list fix
+
+**Root cause:** `sharedLists` is a top-level Firestore collection with no security rule. Firestore blocks all reads/writes by default, causing "could not create list" error.
+
+**Fix:** Updated Firestore rules in Firebase Console (see rules section above). No code changes required.
+(NOTE THIS HAS BEEN FIXED)
+---
+
+## Chunk B scope (next session)
+
+- Remove habits: "10min outside", "20min to myself"
+- Rename: "Screen free wind down" → "1hr no phone time"
+- Rename: "Call or text a friend" → "Send Love 📱"
+- Add habits: No alcohol, 10k steps, 3L water
+- Animated gold crown inline when all habits complete for the day
+- Set default reminder time to 8pm (in profile/notifications setup)
+
+---
+
+## Chunk C scope
+
+- Nico nap summary: total nap time for last 5 days shown as mini-stat row
+- Replace `nicoAgeMonths` manual input with birthday picker — age auto-calculated
+- Solids introduction guide: age-appropriate foods + guidance starting at 6 months, progresses as Nico ages
+
+---
+
+## Chunk D scope
+
+- Fix "push training to next day" — button does nothing (silent failure, likely async throw or missing element bind)
+- Week plan preview: see upcoming workout days from the workouts view
+- Day-swap: ability to swap two days in the weekly schedule
+
+---
+
+## Chunk E scope
+
+- Restore safe walking times widget on Today page (disappeared after back-to-back deploys — regression to diagnose in `today.js` / `weather.js`)
+- Add daily wellness/mental health/mood booster suggestion to Today page
+
+---
+
+## Chunk F scope (Book tracker — new module)
+
+New `views/books.js` + `services/books.js`. Features:
+- Statuses: Currently reading / Not yet started / Finished / Chose not to finish
+- Start + finish dates, reading goals with deadline prompts
+- Multiple books in progress at once
+- Finished book history (clean, elegant)
+- Stats: books per year, streak, pages
+- Star/love/dislike rating after finishing
+- Wishlist of books to read next
+- AI suggestions based on finished books (uses Claude API, same pattern as Nico)
+- New nav entry; new Firestore subcollection `users/{userId}/books/{bookId}`
+
+---
+
+## Chunk G scope (Nutrition overhaul — 2 sessions)
+
+Session 1: AI nutritionist onboarding (runs every 4 weeks), preferred foods list (up to 50), 10 food-goal questions, non-negotiable meal entry with macros + meal slot.
+Session 2: AI-generated weekly meal plan view, swap individual meals, end-of-week feedback loop, focus foods management in profile.
+
+---
+
+## Chunk H scope (Future — structural)
+
+- Nico / baby tracker module becomes optional toggle in profile
+- Remove Cicely-specific hardcoding (Greystanes, Woolworths) → move to user preferences
+- Garmin sync research (requires OAuth, separate investigation)
 
 ---
 
@@ -178,8 +322,6 @@ To deploy the Cloud Function when ready:
 
 ## Chunk 12 notes — Production readiness + polish
 
-**Code audit:** No `console.log` statements in client code. `console.warn`/`error` retained where appropriate. Font loading uses `display=swap`. All good.
-
 **Polish delivered:**
 - Nap list now sorts by start time (not log order)
 - Profile "Your progress" → "Workout progress", "Current streak" → "Workout streak"
@@ -191,12 +333,6 @@ To deploy the Cloud Function when ready:
 - Run Lighthouse on mobile
 - Test on real iOS + Android devices
 - Confirm Netlify env vars and Firestore rules are live
-
----
-
-## Going forward
-
-No fixed chunk structure — new sessions will pick up ad-hoc improvements, features, or fixes as needed.
 
 ---
 
@@ -216,7 +352,7 @@ No fixed chunk structure — new sessions will pick up ad-hoc improvements, feat
 - 20 activities across Outdoor / Indoor / Developmental types
 - Energy filter: Active or Calm
 - Filter pills: All / Active / Calm / Outdoor / Indoor / Learn
-- Age-band filtering via `nicoAgeMonths` set in Profile
+- Age-band filtering via `nicoAgeMonths` set in Profile (to be replaced by birthday picker in Chunk C)
 - Nap tracker: live start/end logging + retrospective past nap entry via overlay
 - All persisted to `nicoLogs/{date}`
 - Sydney/Greystanes local context in outdoor activities
