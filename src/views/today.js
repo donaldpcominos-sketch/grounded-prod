@@ -1,498 +1,421 @@
-/**
- * today.js — Grounded Today View (Adaptive 3-State)
- *
- * Single emotional surface. No navigation. No choices. No reveal.
- * States: SURVIVAL | LOW_CAPACITY | STABLE
- * Default: LOW_CAPACITY. Works at 3AM. No user input required.
- *
- * Phase 2: state resolution delegated to stateEngine.js.
- *          Presence layer, usage signals, and weekly reflection
- *          are invoked fire-and-forget after render.
- *
- * Phase 3: continuityTag resolved from stateEngine and passed into renderToday.
- *          Copy varies deterministically by state × continuityTag.
- *          Layout, structure, and element count are unchanged.
- *          Daily history snapshot written fire-and-forget.
- *
- * Phase 4: Cache-first render — Today renders synchronously from sessionStorage
- *          cache on return visits. On cache miss, a safe deterministic placeholder
- *          renders immediately (LOW_CAPACITY × NEUTRAL × base); background
- *          resolution patches to the correct state once signals are read.
- *          No loading state at any point.
- */
+import { getTodayWellnessCheckin, saveTodayWellnessCheckin } from '../services/wellness.js';
+import { touchLastActive, getLastActiveGap } from '../services/lastSeen.js';
+import { getSuggestionsForEnergy } from '../data/nutrition.js';
+import { getTodayDisplay, getTodayKey, showToast } from '../utils.js';
+import { fetchWeather } from '../services/weather.js';
+import { WEEKLY_SPLIT } from '../data/workouts.js';
+import { getTodayWorkoutSession } from '../services/workouts.js';
+import { getHabitLog, HABITS } from '../services/habits.js';
+import { navigateTo } from '../router.js';
 
-import { getLastActiveGap, touchLastActive } from '../services/lastSeen.js';
-import { getTodayWellnessCheckin }           from '../services/wellness.js';
-import { getHabitLog, HABITS }               from '../services/habits.js';
-import { getTodayWorkoutSession }            from '../services/workouts.js';
-import { getTodayKey, getTodayDisplay }      from '../utils.js';
-import { db }                                from '../lib/firebase.js';
-import { doc, getDoc }                       from 'firebase/firestore';
+// ─── Weather card ─────────────────────────────────────────────────────────────
 
-// ─── Phase 2 services ─────────────────────────────────────────────────────────
-
-import {
-  resolveAndPersistState,
-  isNightWindow,
-  STATES,
-} from '../services/stateEngine.js';
-
-import { recordAppOpen, getDailySignals }    from '../services/usageSignals.js';
-import { evaluatePresence }                  from '../services/presenceEngine.js';
-import {
-  sendPresenceNotification,
-  maybeSendNightNotification,
-}                                            from '../services/notificationService.js';
-import { maybeGenerateWeeklyReflection }     from '../services/reflectionEngine.js';
-
-// ─── Phase 3 services ─────────────────────────────────────────────────────────
-
-import { writeDailySnapshot }                from '../services/historyStore.js';
-import { CONTINUITY_TAGS }                   from '../services/patternEngine.js';
-
-// ─── Phase 4 services ─────────────────────────────────────────────────────────
-
-import {
-  getCachedTodayPayload,
-  setCachedTodayPayload,
-  isCachedPayloadUsable,
-  shouldPatchRenderedPayload,
-}                                            from '../services/renderCache.js';
-
-import {
-  detectFlatDay,
-  getFlatDayAdjustmentKey,
-}                                            from '../services/flatDayEngine.js';
-
-import { resolveTodayCopy, getFirstLineKey, resolveVariantBranch } from '../services/copyResolver.js';
-import { trackEvent }                        from '../services/analytics.js';
-import { startSession }                      from '../services/sessionTracker.js';
-import { deriveAtRiskOfDrift }               from '../services/driftEngine.js';
-
-// ─── Re-exports (backward compatibility) ─────────────────────────────────────
-
-export const TODAY_STATES = STATES;
-export { isNightWindow };
-
-// ─── Payload builder ──────────────────────────────────────────────────────────
-
-/**
- * Build the full Today payload from resolved context.
- * This is the canonical shape stored in renderCache and used for patching.
- *
- * @param {{
- *   state:           string,
- *   isNight:         boolean,
- *   continuityTag:   string,
- *   tone:            string,
- *   habitsDoneRatio: number,
- *   gapHours:        number,
- *   atRiskOfDrift:   boolean,
- * }} context
- * @returns {object}
- */
-function buildTodayPayload(context) {
-  const {
-    state,
-    isNight,
-    continuityTag,
-    tone,
-    habitsDoneRatio = 0,
-    gapHours        = 0,
-    atRiskOfDrift   = false,
-  } = context;
-
-  const flatDayFlag        = detectFlatDay({ resolvedState: state, continuityTag, habitsDoneRatio, gapHours, isNight });
-  const driftVariantApplied = atRiskOfDrift;
-  const variantBranch      = resolveVariantBranch({ atRiskOfDrift, flatDayFlag });
-
-  const copy = resolveTodayCopy({
-    resolvedState: state,
-    continuityTag,
-    isNight,
-    atRiskOfDrift,
-    flatDayFlag,
-  });
-
-  const firstLineKey    = getFirstLineKey({ resolvedState: state, continuityTag, isNight }, variantBranch);
-  const copyVariantBranch = variantBranch;
-
-  return {
-    dateKey:            getTodayKey(),
-    resolvedState:      state,
-    continuityTag,
-    tone,
-    firstLine:          copy.headline,
-    reassurance:        copy.reassurance,
-    status:             copy.status,
-    isNight,
-    driftVariantApplied,
-    flatDayFlag,
-    firstLineKey,
-    copyVariantBranch,
-  };
+function uvBadgeClass(uv) {
+  if (uv >= 8) return 'weather-uv-badge weather-uv-badge--extreme';
+  if (uv >= 4) return 'weather-uv-badge weather-uv-badge--high';
+  return 'weather-uv-badge';
 }
 
-// ─── Render from payload ──────────────────────────────────────────────────────
+function renderWeatherCard(weather) {
+  if (!weather) {
+    return `
+      <div class="weather-card" id="weatherCard">
+        <p class="card-label">Weather</p>
+        <p class="card-body mt-1" style="color:var(--color-ink-4);">Unavailable \u2014 check your connection.</p>
+      </div>
+    `;
+  }
 
-/**
- * Render Today HTML from a resolved payload.
- * Same DOM structure as Phase 3 — no layout changes.
- *
- * @param {object} payload — from buildTodayPayload
- * @returns {string}
- */
-export function renderTodayFromPayload(payload) {
-  const { resolvedState, isNight, firstLine, reassurance, status } = payload;
+  const { currentTemp, currentEmoji, currentDesc, currentUv, forecast, walkWindow, fromCache, cacheAgeMs } = weather;
 
-  const showDate = !isNight && resolvedState !== STATES.SURVIVAL;
+  const staleNote = fromCache
+    ? `<p class="weather-stale-note">Offline \u2014 last updated ${Math.round(cacheAgeMs / 60000)} min ago</p>`
+    : '';
+
+  const forecastHtml = (forecast || []).map(d => `
+    <div class="weather-forecast-day">
+      <p class="forecast-label">${d.label}</p>
+      <p class="forecast-emoji">${d.emoji}</p>
+      <p class="forecast-temps">${d.high}&deg; <span>${d.low}&deg;</span></p>
+    </div>
+  `).join('');
 
   return `
-    <main class="view-scroll today-surface${isNight ? ' today-surface--night' : ''}">
-      <div class="view-inner today-inner">
+    <div class="weather-card" id="weatherCard">
+      <div class="weather-main">
+        <div class="weather-current">
+          <span class="weather-emoji">${currentEmoji}</span>
+          <div class="weather-temp-block">
+            <p class="weather-temp">${currentTemp}&deg;</p>
+            <p class="weather-desc">${currentDesc}</p>
+          </div>
+        </div>
+        <span class="${uvBadgeClass(currentUv)}">UV ${currentUv}</span>
+      </div>
+      ${walkWindow ? `<div class="weather-walk-window">${walkWindow}</div>` : ''}
+      <div class="weather-forecast">${forecastHtml}</div>
+      ${staleNote}
+    </div>
+  `;
+}
 
-        <header class="today-header">
-          ${showDate ? `<p class="today-eyebrow">${getTodayDisplay()}</p>` : ''}
-          <h1 class="today-headline">${firstLine}</h1>
-          <p class="today-reassurance">${reassurance}</p>
-          ${status ? `<p class="today-status">${status}</p>` : ''}
+// ─── Return message ───────────────────────────────────────────────────────────
+
+function getReturnMessage(gapHours) {
+  if (gapHours <= 48) return null;
+  if (gapHours > 7 * 24) return { headline: 'You\u2019ve been away for a while.', sub: 'This is your space. Take your time \u2014 no catch-up needed.' };
+  if (gapHours > 3 * 24) return { headline: 'It\u2019s been a few days.', sub: 'Welcome back. No pressure \u2014 just checking in when you\u2019re ready.' };
+  return { headline: 'Good to see you again.', sub: 'It\u2019s been a couple of days. Start wherever feels right.' };
+}
+
+// ─── Quick check-in ───────────────────────────────────────────────────────────
+
+const MOOD_OPTIONS = [
+  { value: 'calm',      emoji: '🌿', label: 'Calm'      },
+  { value: 'good',      emoji: '✨', label: 'Good'      },
+  { value: 'flat',      emoji: '😶', label: 'Flat'      },
+  { value: 'stretched', emoji: '🌊', label: 'Stretched' }
+];
+
+const ENERGY_OPTIONS = [
+  { value: 'low',    emoji: '🌙', label: 'Low'    },
+  { value: 'medium', emoji: '☀️', label: 'Medium' },
+  { value: 'high',   emoji: '⚡', label: 'High'   }
+];
+
+function renderQuickCheckin(mood, energy) {
+  const bothSet = mood && energy;
+
+  if (bothSet) {
+    const m = MOOD_OPTIONS.find(o => o.value === mood);
+    const e = ENERGY_OPTIONS.find(o => o.value === energy);
+    return `
+      <div class="qci-card qci-card--summary" id="quickCheckin">
+        <div class="qci-summary-row">
+          <div class="qci-summary-pair">
+            <span class="qci-summary-chip">${m?.emoji || ''} ${m?.label || mood}</span>
+            <span class="qci-summary-chip">${e?.emoji || ''} ${e?.label || energy}</span>
+          </div>
+          <button class="qci-edit-btn" id="qciEditBtn" aria-label="Edit check-in">Edit</button>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="qci-card" id="quickCheckin">
+      <p class="qci-heading">How are you today?</p>
+      <div class="qci-group">
+        ${MOOD_OPTIONS.map(o => `
+          <button type="button"
+            class="qci-btn${mood === o.value ? ' qci-btn--selected' : ''}"
+            data-qci-group="mood" data-value="${o.value}"
+            aria-pressed="${mood === o.value}"
+          >
+            <span class="qci-btn-emoji">${o.emoji}</span>
+            <span class="qci-btn-label">${o.label}</span>
+          </button>
+        `).join('')}
+      </div>
+      <div class="qci-divider"></div>
+      <div class="qci-group qci-group--energy">
+        ${ENERGY_OPTIONS.map(o => `
+          <button type="button"
+            class="qci-btn${energy === o.value ? ' qci-btn--selected' : ''}"
+            data-qci-group="energy" data-value="${o.value}"
+            aria-pressed="${energy === o.value}"
+          >
+            <span class="qci-btn-emoji">${o.emoji}</span>
+            <span class="qci-btn-label">${o.label}</span>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// ─── Nourishment card (prompts only, no tracking) ─────────────────────────────
+
+function energyEmoji(energy) {
+  return { low: '🌙', medium: '☀️', high: '⚡' }[energy] || '';
+}
+
+function renderNourishmentCard(energy) {
+  const suggestions = getSuggestionsForEnergy(energy || 'medium', 3);
+  const energyLabel = energy
+    ? `${energyEmoji(energy)} ${energy.charAt(0).toUpperCase() + energy.slice(1)} energy`
+    : 'Today';
+
+  return `
+    <div class="card" id="nourishmentCard">
+      <div class="card-row">
+        <div>
+          <p class="card-label">Nourishment</p>
+          <p class="card-body mt-1">Ideas to eat well today.</p>
+        </div>
+        <span class="badge">${energyLabel}</span>
+      </div>
+      <div class="nutrition-suggestions mt-4">
+        ${suggestions.map(s => `
+          <div class="nutrition-suggestion">
+            <p class="nutrition-suggestion-label">${s.label}</p>
+            <p class="nutrition-suggestion-desc">${s.desc}</p>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// ─── Today's workout tile ─────────────────────────────────────────────────────
+
+function getTypeTag(type) {
+  return { lower: 'Glutes', upper: 'Upper', full: 'Full Body', 'cardio-core': 'Cardio', recovery: 'Mobility' }[type] || type;
+}
+
+function getTypeColor(type) {
+  return { lower: 'tag--warm', upper: 'tag--cool', full: 'tag--neutral', 'cardio-core': 'tag--green', recovery: 'tag--soft' }[type] || 'tag--neutral';
+}
+
+function renderWorkoutTile(savedSession) {
+  const today = new Date().getDay();
+  const split = WEEKLY_SPLIT[today];
+  if (!split) return '';
+
+  const isDone = savedSession?.status === 'complete';
+  const isAlternate = savedSession?.type === 'alternate';
+
+  let statusLine = '';
+  if (isDone && isAlternate) {
+    statusLine = `<span class="workout-tile-done workout-tile-done--alt">\u2713 ${savedSession.alternateLabel || 'Activity'} done</span>`;
+  } else if (isDone) {
+    statusLine = '<span class="workout-tile-done">\u2713 Done today</span>';
+  }
+
+  return `
+    <button class="workout-tile" id="workoutTileBtn" aria-label="Go to workouts">
+      <div class="workout-tile-left">
+        <p class="workout-tile-eyebrow">Today&#39;s workout</p>
+        <p class="workout-tile-label">${split.label}</p>
+        <p class="workout-tile-focus">${split.focus}</p>
+      </div>
+      <div class="workout-tile-right">
+        <span class="tag ${getTypeColor(split.type)}">${getTypeTag(split.type)}</span>
+        ${statusLine}
+        <span class="workout-tile-arrow">\u2192</span>
+      </div>
+    </button>
+  `;
+}
+
+// ─── Habits entry tile ────────────────────────────────────────────────────────
+
+function renderHabitsTile(todayHabits) {
+  const doneCount = HABITS.filter(h => todayHabits[h.id] === true).length;
+  const total     = HABITS.length;
+  const allDone   = doneCount === total;
+  // Progress as fraction of circumference: circle r=14, circumference=87.96
+  // We use a viewBox-independent approach: stroke-dasharray out of 87.96
+  const circ      = 87.96;
+  const filled    = total > 0 ? (doneCount / total) * circ : 0;
+
+  return `
+    <button class="habits-entry-tile" id="habitsTileBtn" aria-label="Open habits tracker">
+      <div class="habits-tile-top">
+        <div>
+          <p class="habits-tile-eyebrow">Daily habits</p>
+          <p class="habits-tile-count">${doneCount} <span>of ${total}</span></p>
+        </div>
+        <div class="habits-tile-right">
+          <div class="habits-tile-ring">
+            <svg width="42" height="42" viewBox="0 0 36 36" class="habits-ring-svg">
+              <circle class="habits-ring-bg" cx="18" cy="18" r="14" fill="none"/>
+              <circle class="habits-ring-fill" cx="18" cy="18" r="14" fill="none"
+                stroke="${allDone ? '#5a7a5a' : 'var(--color-ink-2)'}"
+                stroke-dasharray="${filled.toFixed(2)} ${circ.toFixed(2)}"
+                stroke-dashoffset="0"/>
+            </svg>
+            ${allDone
+              ? '<span class="habits-ring-check">\u2713</span>'
+              : `<span class="habits-ring-pct">${Math.round((doneCount/total)*100)}%</span>`}
+          </div>
+          <span class="workout-tile-arrow">\u2192</span>
+        </div>
+      </div>
+      <div class="habits-tile-preview">
+        ${HABITS.slice(0, 5).map(h => {
+          const done = todayHabits[h.id] === true;
+          return `<span class="habits-preview-dot${done ? ' habits-preview-dot--done' : ''}" aria-hidden="true">${h.emoji}</span>`;
+        }).join('')}
+        ${total > 5 ? `<span class="habits-preview-more">+${total - 5}</span>` : ''}
+      </div>
+    </button>
+  `;
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+
+function renderReturnCard(returnMsg) {
+  if (!returnMsg) return '';
+  return `
+    <div class="return-card" id="returnCard" role="status" aria-live="polite">
+      <div class="return-card-inner">
+        <div class="return-card-text">
+          <p class="return-card-headline">${returnMsg.headline}</p>
+          <p class="return-card-sub">${returnMsg.sub}</p>
+        </div>
+        <button class="return-card-dismiss" id="returnCardDismiss" aria-label="Dismiss">\u2715</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderView(user, wellness, returnMsg, weather, savedSession, todayHabits) {
+  const firstName = user.displayName?.split(' ')[0] || 'there';
+
+  return `
+    <main class="view-scroll">
+      <div class="view-inner">
+
+        <header class="page-header">
+          <p class="eyebrow">Grounded</p>
+          <div class="header-row">
+            <div>
+              <h1 class="page-title">Welcome, ${firstName}</h1>
+              <p class="page-subtitle">${getTodayDisplay()}</p>
+            </div>
+            ${user.photoURL ? `<img src="${user.photoURL}" alt="${user.displayName || 'Profile'}" class="avatar" />` : ''}
+          </div>
         </header>
+
+        ${renderReturnCard(returnMsg)}
+        ${renderWeatherCard(weather)}
+        ${renderQuickCheckin(wellness.mood || '', wellness.energy || '')}
+
+        <div class="card-stack">
+          ${renderWorkoutTile(savedSession)}
+          ${renderHabitsTile(todayHabits)}
+          ${renderNourishmentCard(wellness.energy || '')}
+        </div>
+
+        <p id="wellnessStatus" class="status-text mt-4 px-1"></p>
 
       </div>
     </main>
   `;
-}
-
-// ─── Backward-compatible renderToday ─────────────────────────────────────────
-
-/**
- * Kept for backward compatibility with any external callers.
- * Internally delegates to renderTodayFromPayload.
- *
- * @param {{ state: string, isNight: boolean, continuityTag?: string, atRiskOfDrift?: boolean, flatDayFlag?: boolean }} opts
- * @returns {string}
- */
-export function renderToday({ state, isNight, continuityTag = CONTINUITY_TAGS.NEUTRAL, atRiskOfDrift = false, flatDayFlag = false }) {
-  const copy = resolveTodayCopy({ resolvedState: state, continuityTag, isNight, atRiskOfDrift, flatDayFlag });
-  const showDate = !isNight && state !== STATES.SURVIVAL;
-
-  return `
-    <main class="view-scroll today-surface${isNight ? ' today-surface--night' : ''}">
-      <div class="view-inner today-inner">
-
-        <header class="today-header">
-          ${showDate ? `<p class="today-eyebrow">${getTodayDisplay()}</p>` : ''}
-          <h1 class="today-headline">${copy.headline}</h1>
-          <p class="today-reassurance">${copy.reassurance}</p>
-          ${copy.status ? `<p class="today-status">${copy.status}</p>` : ''}
-        </header>
-
-      </div>
-    </main>
-  `;
-}
-
-// ─── Expanded copy ────────────────────────────────────────────────────────────
-
-/**
- * Resolve the single expanded copy line shown on tap-expand.
- * Deterministic. Keyed by tone, with continuityTag as secondary signal.
- * No async. No new data fetching.
- *
- * @param {{ tone: string, continuityTag: string, isNight: boolean }} payload
- * @returns {string}
- */
-function resolveExpandedCopy({ tone, continuityTag, isNight }) {
-  if (isNight) return 'Rest is its own kind of work.';
-
-  // Secondary refinement for SUSTAINED_HARD regardless of tone
-  if (continuityTag === CONTINUITY_TAGS.SUSTAINED_HARD) {
-    return 'Hard stretches don\'t require explanations.';
-  }
-
-  switch (tone) {
-    case 'GENTLE':   return 'You\'re doing more than it feels like.';
-    case 'GROUNDED': return 'It does not all need to move at once.';
-    case 'OPEN':     return 'There\'s room in this.';
-    case 'STEADY':
-    default:         return 'One thing at a time is enough.';
-  }
-}
-
-// ─── Expansion behaviour ──────────────────────────────────────────────────────
-
-/**
- * Attach tap-expand / tap-collapse to the rendered Today surface.
- * Local UI state only — resets on every init() call.
- * No new routes. No async. No data fetching.
- *
- * @param {HTMLElement} container
- * @param {{ tone: string, continuityTag: string, isNight: boolean }} payload
- */
-function attachExpansion(container, payload) {
-  // Local state — resets on every init (covers reload + background)
-  let isExpanded = false;
-
-  const surface = container.querySelector('.today-surface');
-  if (!surface) return;
-
-  // Inject the hidden expanded block into the DOM once — never re-create it
-  const inner = surface.querySelector('.today-inner');
-  if (!inner) return;
-
-  const expandedCopy = resolveExpandedCopy(payload);
-
-  const expandBlock = document.createElement('p');
-  expandBlock.className = 'today-expanded-line';
-  expandBlock.textContent = expandedCopy;
-  inner.appendChild(expandBlock);
-
-  // ── Expand / collapse ──────────────────────────────────────────────────────
-
-  function expand() {
-    if (isExpanded) return;
-    isExpanded = true;
-    surface.classList.add('today-surface--expanded');
-    expandBlock.classList.add('today-expanded-line--visible');
-  }
-
-  function collapse() {
-    if (!isExpanded) return;
-    isExpanded = false;
-    surface.classList.remove('today-surface--expanded');
-    expandBlock.classList.remove('today-expanded-line--visible');
-  }
-
-  // ── Tap: toggle ────────────────────────────────────────────────────────────
-  // Scroll-collapse is not used: Today's content is short enough that
-  // the surface scroll container will rarely have overflow, so scroll
-  // events are unreliable as a collapse trigger. Tap-toggle is sufficient.
-  surface.addEventListener('click', () => {
-    isExpanded ? collapse() : expand();
-  }, { passive: true });
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 export const TodayView = {
   async init(container, user) {
-    const now      = new Date();
+    container.innerHTML = '<div class="loading-state"><p>Loading your dashboard\u2026</p></div>';
+
     const todayKey = getTodayKey();
 
-    // ── Phase 4: cache-first render ────────────────────────────────────────────
-    // Attempt to render synchronously from cached payload.
-    // No loading spinner — if cache is valid, render is immediate.
-
-    const cachedPayload = getCachedTodayPayload();
-    const cacheUsable   = isCachedPayloadUsable(cachedPayload, todayKey);
-
-    if (cacheUsable) {
-      // Synchronous render from cache — no async, no visible loading state
-      container.innerHTML = renderTodayFromPayload(cachedPayload);
-      attachExpansion(container, cachedPayload);
-    } else {
-      // Cache miss (first visit or new day) — render a safe deterministic
-      // placeholder payload immediately. No loading state, no spinner.
-      // Uses LOW_CAPACITY × NEUTRAL × base — the correct conservative default
-      // for any unknown context. Not emotionally tuned to the user's actual
-      // state on first load; the background resolve will patch it once signals
-      // are read. Emotionally neutral and non-directive until then.
-      const fallbackPayload = buildTodayPayload({
-        state:           STATES.LOW_CAPACITY,
-        isNight:         isNightWindow(now),
-        continuityTag:   CONTINUITY_TAGS.NEUTRAL,
-        tone:            'STEADY',
-        habitsDoneRatio: 0,
-        gapHours:        0,
-        atRiskOfDrift:   false,
-      });
-      container.innerHTML = renderTodayFromPayload(fallbackPayload);
-      attachExpansion(container, fallbackPayload);
-    }
-
-    // ── Phase 4: session tracking ──────────────────────────────────────────────
-    startSession(user.uid);
-
-    // ── Signal reads ───────────────────────────────────────────────────────────
-
-    // Critical path — needed for state resolution
-    const [
-      { gapHours },
-      todayHabits,
-    ] = await Promise.all([
+    const [wellness, { gapHours }, weather, savedSession, todayHabits] = await Promise.all([
+      getTodayWellnessCheckin(user.uid),
       getLastActiveGap(user.uid),
-      getHabitLog(user.uid, todayKey).catch(() => ({})),
+      fetchWeather().catch(() => null),
+      getTodayWorkoutSession(user.uid).catch(() => null),
+      getHabitLog(user.uid, todayKey).catch(() => ({}))
     ]);
 
-    // Fire-and-forget reads — warm caches without blocking render
-    getTodayWellnessCheckin(user.uid).catch(() => null);
-    getTodayWorkoutSession(user.uid).catch(() => null);
-
-    // Touch lastActive (once per session, debounced inside)
     touchLastActive(user.uid);
 
-    // Phase 2: record passive usage signal (once per session)
-    recordAppOpen(user.uid).catch(() => null);
+    const returnMsg = _returnDismissed ? null : getReturnMessage(gapHours);
 
-    // Phase 4: track app_open event (fire-and-forget)
-    trackEvent(user.uid, 'app_open', { hour: now.getHours() }, { dedupeKey: `app_open_${todayKey}` }).catch(() => null);
+    container.innerHTML = renderView(user, wellness, returnMsg, weather, savedSession, todayHabits);
 
-    // Compute habits ratio for state engine
-    const habitsDoneRatio = HABITS.length > 0
-      ? HABITS.filter(h => todayHabits[h.id] === true).length / HABITS.length
-      : 0;
+    const wellnessState = {
+      mood:   wellness.mood   || '',
+      energy: wellness.energy || ''
+    };
 
-    // ── Phase 4: resolveTodayPayloadAsync ─────────────────────────────────────
-    // Resolve state in background regardless of cache hit.
-    // Patch the DOM only if something meaningful changed.
-
-    const { state, isNight, continuityTag, tone } = await resolveAndPersistState(
-      user.uid,
-      { gapHours, habitsDoneRatio },
-      now
-    );
-
-    // Phase 4: derive drift inputs.
-    //
-    // Three conditions (from driftEngine spec):
-    //   1. gapHours > 18                    — gap-based, always available
-    //   2. openCountDeclining2Days          — today vs yesterday appOpenCount
-    //   3. lowUnpromptedOpenRate2Days       — sum of unpromptedOpenCount across
-    //                                         today + yesterday from dailyHistory
-    //                                         NOTE: this is a 2-day rolling proxy,
-    //                                         not a true 48h timestamp window.
-    //                                         Renamed from noUnpromptedOpenIn48h
-    //                                         to reflect what is actually measured.
-    //
-    // On any read failure the outer catch falls back to condition 1 only.
-    // This is documented degradation — not silent breakage.
-    // driftEngine.deriveAtRiskOfDrift treats each condition as an OR,
-    // so gap-only fallback remains meaningful.
-    const atRiskOfDrift = await (async () => {
-      try {
-        const signals = await getDailySignals(user.uid);
-
-        // ── Condition 2: open count declining over last 2 days ────────────────
-        let openCountDeclining2Days = false;
-        const todayCount   = signals.appOpenCount ?? 1;
-        const yesterdayKey = (() => {
-          const d = new Date(now);
-          d.setDate(d.getDate() - 1);
-          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        })();
-
-        // Read yesterday's open count from dailyHistory (already written by snapshot)
-        try {
-          const ySnap = await getDoc(doc(db, 'users', user.uid, 'dailyHistory', yesterdayKey));
-          if (ySnap.exists()) {
-            const yesterdayCount = ySnap.data().appOpenCount ?? 0;
-            openCountDeclining2Days = todayCount < yesterdayCount;
-          }
-        } catch { /* non-critical — condition defaults false */ }
-
-        // ── Condition 3: low unprompted open rate over 2 days ────────────────
-        // Derived from unpromptedOpenCount in today + yesterday dailyHistory.
-        // A rolling proxy — not a true 48h timestamp window. Named accordingly.
-        let lowUnpromptedOpenRate2Days = false;
-        try {
-          const todayUnprompted = signals.unpromptedOpenCount ?? 0;
-          let   yesterdayUnprompted = 0;
-          const ySnap2 = await getDoc(doc(db, 'users', user.uid, 'dailyHistory', yesterdayKey));
-          if (ySnap2.exists()) {
-            yesterdayUnprompted = ySnap2.data().unpromptedOpenCount ?? 0;
-          }
-          lowUnpromptedOpenRate2Days = (todayUnprompted + yesterdayUnprompted) === 0;
-        } catch { /* non-critical — condition defaults false */ }
-
-        return deriveAtRiskOfDrift({
-          gapHours,
-          openCountDeclining2Days,
-          // Pass under the canonical param name so driftEngine stays unchanged
-          noUnpromptedOpenIn48h: lowUnpromptedOpenRate2Days,
-        });
-      } catch {
-        // Documented degradation: outer failure falls back to condition 1 only.
-        // Drift sensitivity is reduced but not broken — gapHours > 18 still fires.
-        return deriveAtRiskOfDrift({ gapHours });
+    // ── Return card ──
+    document.getElementById('returnCardDismiss')?.addEventListener('click', () => {
+      _returnDismissed = true;
+      const card = document.getElementById('returnCard');
+      if (card) {
+        card.classList.add('return-card--dismissing');
+        setTimeout(() => card.remove(), 350);
       }
-    })();
-
-    // Build fresh payload
-    const freshPayload = buildTodayPayload({
-      state,
-      isNight,
-      continuityTag,
-      tone,
-      habitsDoneRatio,
-      gapHours,
-      atRiskOfDrift,
     });
 
-    // ── Patch or render ────────────────────────────────────────────────────────
+    // ── Workout tile ──
+    document.getElementById('workoutTileBtn')?.addEventListener('click', () => {
+      navigateTo('workouts');
+    });
 
-    if (cacheUsable && !shouldPatchRenderedPayload(cachedPayload, freshPayload)) {
-      // Cache was good and nothing changed — no DOM update, no layout shift
-    } else {
-      // Render fresh payload
-      container.innerHTML = renderTodayFromPayload(freshPayload);
-      attachExpansion(container, freshPayload);
+    // ── Habits tile ──
+    document.getElementById('habitsTileBtn')?.addEventListener('click', () => {
+      navigateTo('habits');
+    });
+
+    // ── Quick check-in ──
+    function rebuildQci() {
+      const qci = document.getElementById('quickCheckin');
+      if (!qci) return;
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderQuickCheckin(wellnessState.mood, wellnessState.energy);
+      qci.replaceWith(fresh.firstElementChild);
+      bindQci();
     }
 
-    // Update cache for next visit
-    setCachedTodayPayload(freshPayload);
+    function rebuildNourishmentCard() {
+      const card = document.getElementById('nourishmentCard');
+      if (!card) return;
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderNourishmentCard(wellnessState.energy);
+      card.replaceWith(fresh.firstElementChild);
+    }
 
-    // Phase 4: track today_rendered event
-    trackEvent(user.uid, 'today_rendered', {
-      state,
-      isNight,
-      continuityTag,
-      firstLineKey: freshPayload.firstLineKey,
-      copyVariantBranch: freshPayload.copyVariantBranch,
-    }).catch(() => null);
+    function showQciTick() {
+      const qci = document.getElementById('quickCheckin');
+      if (!qci) return;
+      qci.classList.add('qci-card--saved');
+      setTimeout(() => qci.classList.remove('qci-card--saved'), 900);
+    }
 
-    // ── Phase 3: write daily history snapshot ─────────────────────────────────
-    (async () => {
-      try {
-        const signals = await getDailySignals(user.uid);
-        await writeDailySnapshot(user.uid, {
-          resolvedState:      state,
-          continuityTag,
-          habitsDoneRatio,
-          gapHours,
-          nightOpen:          isNight,
-          appOpenCount:        signals.appOpenCount        ?? 1,
-          unpromptedOpenCount: signals.unpromptedOpenCount ?? 0,
-          // Phase 4 additions
-          tone,
-          firstLineKey:        freshPayload.firstLineKey,
-          copyVariantBranch:   freshPayload.copyVariantBranch,
-          flatDayFlag:         freshPayload.flatDayFlag,
-          atRiskOfDrift:       freshPayload.driftVariantApplied,
-        });
-      } catch {
-        // Non-critical
-      }
-    })();
+    function bindQci() {
+      document.querySelectorAll('[data-qci-group]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const group = btn.dataset.qciGroup;
+          const val   = btn.dataset.value;
+          wellnessState[group] = val;
 
-    // ── Phase 2: presence layer — all fire-and-forget, never re-renders ───────
+          document.querySelectorAll(`[data-qci-group="${group}"]`).forEach(b => {
+            b.classList.toggle('qci-btn--selected', b.dataset.value === val);
+            b.setAttribute('aria-pressed', String(b.dataset.value === val));
+          });
 
-    if (isNight) {
-      maybeSendNightNotification(user.uid).catch(() => null);
-    } else {
-      evaluatePresence(
-        user.uid,
-        { gapHours, state, nightOpen: false, continuityTag, tone },
-        now
-      )
-        .then(trigger => {
-          if (trigger) {
-            sendPresenceNotification(user.uid, trigger, state, { continuityTag, tone }).catch(() => null);
+          try {
+            await saveTodayWellnessCheckin(user.uid, wellnessState);
+            if (wellnessState.mood && wellnessState.energy) {
+              showQciTick();
+              setTimeout(() => {
+                rebuildQci();
+                rebuildNourishmentCard();
+              }, 700);
+            }
+          } catch {
+            showToast('Save failed \u2014 try again', 'error');
           }
-        })
-        .catch(() => null);
+        });
+      });
+
+      document.getElementById('qciEditBtn')?.addEventListener('click', () => {
+        const qci = document.getElementById('quickCheckin');
+        if (!qci) return;
+        const fresh = document.createElement('div');
+        fresh.innerHTML = renderQuickCheckin('', '');
+        qci.replaceWith(fresh.firstElementChild);
+        bindQci();
+      });
     }
 
-    // Weekly reflection — runs Sundays only, once per week
-    maybeGenerateWeeklyReflection(user.uid, { continuityTag, tone }).catch(() => null);
-  },
+    bindQci();
+  }
 };
+
+let _returnDismissed = false;
