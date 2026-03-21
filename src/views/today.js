@@ -8,6 +8,11 @@
  * Phase 2: state resolution delegated to stateEngine.js.
  *          Presence layer, usage signals, and weekly reflection
  *          are invoked fire-and-forget after render.
+ *
+ * Phase 3: continuityTag resolved from stateEngine and passed into renderToday.
+ *          Copy varies deterministically by state × continuityTag.
+ *          Layout, structure, and element count are unchanged.
+ *          Daily history snapshot written fire-and-forget.
  */
 
 import { getLastActiveGap, touchLastActive } from '../services/lastSeen.js';
@@ -26,7 +31,7 @@ import {
   STATES,
 } from '../services/stateEngine.js';
 
-import { recordAppOpen }                     from '../services/usageSignals.js';
+import { recordAppOpen, getDailySignals }    from '../services/usageSignals.js';
 import { evaluatePresence }                  from '../services/presenceEngine.js';
 import {
   sendPresenceNotification,
@@ -34,31 +39,117 @@ import {
 }                                            from '../services/notificationService.js';
 import { maybeGenerateWeeklyReflection }     from '../services/reflectionEngine.js';
 
+// ─── Phase 3 services ─────────────────────────────────────────────────────────
+
+import { writeDailySnapshot }                from '../services/historyStore.js';
+import { CONTINUITY_TAGS }                   from '../services/patternEngine.js';
+
 // ─── Re-exports (backward compatibility) ─────────────────────────────────────
-// Other modules that import TODAY_STATES or isNightWindow from today.js
-// continue to work without changes.
 
 export const TODAY_STATES = STATES;
 export { isNightWindow };
 
-// ─── Copy ─────────────────────────────────────────────────────────────────────
-// Fixed strings per state. Guidance is embedded in reassurance — not separate.
+// ─── Copy map ─────────────────────────────────────────────────────────────────
+//
+// Structure: COPY[state][continuityTag] → { headline, reassurance, status }
+//
+// Rules:
+//   - headline, reassurance, status only — no new elements, no new concepts
+//   - NEUTRAL entries are Phase 2 copy exactly (no regression for new users)
+//   - No suggestion-based language. No forward-motion framing.
+//   - No implied expectation or improvement.
+//   - Everything reads as: this is enough as it is.
 
 const COPY = {
+
+  // ── SURVIVAL ──────────────────────────────────────────────────────────────
+
   [STATES.SURVIVAL]: {
-    headline:    'Today is a survival day',
-    reassurance: 'Nothing about today needs to be perfect.',
-    status:      'Today has been reduced.',
+    [CONTINUITY_TAGS.SUSTAINED_HARD]: {
+      headline:    'Today is a survival day',
+      reassurance: 'There\'s nothing that needs doing right now.',
+      status:      'Today has been reduced.',
+    },
+    [CONTINUITY_TAGS.IMPROVING]: {
+      headline:    'Today is a survival day',
+      reassurance: 'Nothing about today needs to be perfect.',
+      status:      'Today has been reduced.',
+    },
+    [CONTINUITY_TAGS.DECLINING]: {
+      headline:    'Today is a survival day',
+      reassurance: 'Nothing about today needs to be perfect.',
+      status:      'Today has been reduced.',
+    },
+    [CONTINUITY_TAGS.SUSTAINED_STABLE]: {
+      headline:    'Today is a survival day',
+      reassurance: 'Nothing about today needs to be perfect.',
+      status:      'Today has been reduced.',
+    },
+    [CONTINUITY_TAGS.NEUTRAL]: {
+      headline:    'Today is a survival day',
+      reassurance: 'Nothing about today needs to be perfect.',
+      status:      'Today has been reduced.',
+    },
   },
+
+  // ── LOW_CAPACITY ──────────────────────────────────────────────────────────
+
   [STATES.LOW_CAPACITY]: {
-    headline:    'Take it gently today',
-    reassurance: 'One small thing is enough. A short stretch might help.',
-    status:      'Only what matters is kept.',
+    [CONTINUITY_TAGS.SUSTAINED_HARD]: {
+      headline:    'Take it gently today',
+      reassurance: 'One small thing is enough.',
+      status:      'Only what matters is kept.',
+    },
+    [CONTINUITY_TAGS.IMPROVING]: {
+      headline:    'Take it gently today',
+      reassurance: 'One small thing is enough.',
+      status:      'Only what matters is kept.',
+    },
+    [CONTINUITY_TAGS.DECLINING]: {
+      headline:    'Take it gently today',
+      reassurance: 'One small thing is enough.',
+      status:      'Only what matters is kept.',
+    },
+    [CONTINUITY_TAGS.SUSTAINED_STABLE]: {
+      headline:    'Take it gently today',
+      reassurance: 'One small thing is enough.',
+      status:      'Only what matters is kept.',
+    },
+    [CONTINUITY_TAGS.NEUTRAL]: {
+      headline:    'Take it gently today',
+      reassurance: 'One small thing is enough.',
+      status:      'Only what matters is kept.',
+    },
   },
+
+  // ── STABLE ────────────────────────────────────────────────────────────────
+
   [STATES.STABLE]: {
-    headline:    'You might have a little more space today',
-    reassurance: 'If it feels right, a bit of fresh air could help.',
-    status:      'A little more space is here.',
+    [CONTINUITY_TAGS.SUSTAINED_HARD]: {
+      headline:    'You might have a little more space today',
+      reassurance: 'There\'s a little more room here.',
+      status:      'A little more space is here.',
+    },
+    [CONTINUITY_TAGS.IMPROVING]: {
+      headline:    'There\'s a little more space today',
+      reassurance: 'There\'s a little more room here.',
+      status:      'A little more space is here.',
+    },
+    [CONTINUITY_TAGS.DECLINING]: {
+      headline:    'You might have a little more space today',
+      reassurance: 'There\'s a little more room here.',
+      status:      'A little more space is here.',
+    },
+    [CONTINUITY_TAGS.SUSTAINED_STABLE]: {
+      headline:    'There\'s a bit of space here',
+      reassurance: 'This is enough as it is.',
+      status:      'A little more space is here.',
+    },
+    [CONTINUITY_TAGS.NEUTRAL]: {
+      headline:    'You might have a little more space today',
+      reassurance: 'There\'s a little more room here.',
+      status:      'A little more space is here.',
+    },
   },
 };
 
@@ -67,6 +158,25 @@ const NIGHT_COPY = {
   reassurance: 'Nothing needs doing. Rest if you can.',
   status:      null,
 };
+
+// ─── Copy resolution ──────────────────────────────────────────────────────────
+
+/**
+ * Resolve the correct copy block from state × continuityTag.
+ * Falls back: exact match → NEUTRAL for that state → safe hardcoded default.
+ * Never throws.
+ *
+ * @param {string} state
+ * @param {string} continuityTag
+ * @returns {{ headline: string, reassurance: string, status: string|null }}
+ */
+function resolveCopy(state, continuityTag) {
+  return (
+    COPY[state]?.[continuityTag] ??
+    COPY[state]?.[CONTINUITY_TAGS.NEUTRAL] ??
+    { headline: 'Take it gently today', reassurance: 'One small thing is enough.', status: null }
+  );
+}
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
@@ -86,12 +196,16 @@ async function logTodayEvent(userId, event, meta = {}) {
 
 /**
  * Render the Today surface.
+ * Phase 3: accepts continuityTag to resolve contextual copy.
+ * Layout is unchanged — same three elements, same structure.
  *
- * @param {{ state: string, isNight: boolean }} opts
+ * @param {{ state: string, isNight: boolean, continuityTag?: string }} opts
  * @returns {string}
  */
-export function renderToday({ state, isNight }) {
-  const copy = isNight ? NIGHT_COPY : COPY[state];
+export function renderToday({ state, isNight, continuityTag = CONTINUITY_TAGS.NEUTRAL }) {
+  const copy = isNight
+    ? NIGHT_COPY
+    : resolveCopy(state, continuityTag);
 
   // Date shown in LOW_CAPACITY and STABLE only — not in SURVIVAL or night
   const showDate = !isNight && state !== STATES.SURVIVAL;
@@ -148,36 +262,53 @@ export const TodayView = {
       ? HABITS.filter(h => todayHabits[h.id] === true).length / HABITS.length
       : 0;
 
-    // Phase 2: resolve state via engine (smoothing + persistence included)
-    // SURVIVAL fires immediately from night window — no smoothing gate applied.
-    const { state, isNight } = await resolveAndPersistState(
+    // Phase 2+3: resolve state via engine (smoothing + persistence + continuity included)
+    const { state, isNight, continuityTag, tone } = await resolveAndPersistState(
       user.uid,
       { gapHours, habitsDoneRatio },
       now
     );
 
     // ── Render immediately ────────────────────────────────────────────────────
-    container.innerHTML = renderToday({ state, isNight });
+    container.innerHTML = renderToday({ state, isNight, continuityTag });
 
-    logTodayEvent(user.uid, 'today_render', { state, isNight });
+    logTodayEvent(user.uid, 'today_render', { state, isNight, continuityTag });
+
+    // ── Phase 3: write daily history snapshot ─────────────────────────────────
+    (async () => {
+      try {
+        const signals = await getDailySignals(user.uid);
+        await writeDailySnapshot(user.uid, {
+          resolvedState:   state,
+          habitsDoneRatio,
+          gapHours,
+          nightOpen:       isNight,
+          appOpenCount:    signals.appOpenCount ?? 1,
+        });
+      } catch {
+        // Non-critical
+      }
+    })();
 
     // ── Phase 2: presence layer — all fire-and-forget, never re-renders ───────
 
-    // Night open: SURVIVAL triggers immediately, no suppression gate
     if (isNight) {
       maybeSendNightNotification(user.uid).catch(() => null);
     } else {
-      // Non-night presence evaluation (suppression-aware)
-      evaluatePresence(user.uid, { gapHours, state, nightOpen: false }, now)
+      evaluatePresence(
+        user.uid,
+        { gapHours, state, nightOpen: false, continuityTag, tone },
+        now
+      )
         .then(trigger => {
           if (trigger) {
-            sendPresenceNotification(user.uid, trigger, state).catch(() => null);
+            sendPresenceNotification(user.uid, trigger, state, { continuityTag, tone }).catch(() => null);
           }
         })
         .catch(() => null);
     }
 
     // Weekly reflection — runs Sundays only, once per week
-    maybeGenerateWeeklyReflection(user.uid).catch(() => null);
+    maybeGenerateWeeklyReflection(user.uid, { continuityTag, tone }).catch(() => null);
   },
 };

@@ -4,30 +4,34 @@
  * Single-line notifications only. No title/body split — one sentence, nothing more.
  * No CTA. No destinations. No app self-reference. No implied return.
  * Suppression enforced by presenceEngine.
+ *
+ * Phase 3: absence notifications use tone to lower pressure when sustained
+ * difficulty is present (GENTLE tone). Distinction is meaningful — not cosmetic.
+ * All other triggers and tone combinations use Phase 2 copy unchanged.
  */
 
 import { getPermissionState } from './notifications.js';
 import { TRIGGER_TYPES, logNotificationSent } from './presenceEngine.js';
 import { STATES } from './stateEngine.js';
+import { TONES } from './toneEngine.js';
 
 // ─── Notification copy ────────────────────────────────────────────────────────
-//
-// One sentence per trigger. Title is always empty — body carries the full message.
-// LONG_ABSENCE and RETURN_AFTER_ABSENCE use identical copy: no conceptual distinction.
-// WEEKLY_REFLECTION has no static copy — text is injected from reflectionEngine.
 
 const NOTIFICATION_COPY = {
   [TRIGGER_TYPES.NIGHT_OPEN]: {
-    body:   'Nothing needs doing.',
-    silent: true,
+    body:       'Nothing needs doing.',
+    gentleBody: 'Nothing needs doing.',
+    silent:     true,
   },
   [TRIGGER_TYPES.LONG_ABSENCE]: {
-    body:   'Nothing is expected from you today.',
-    silent: false,
+    body:       'Nothing is expected from you.',
+    gentleBody: 'There\'s no expectation on you.',
+    silent:     false,
   },
   [TRIGGER_TYPES.RETURN_AFTER_ABSENCE]: {
-    body:   'Nothing is expected from you today.',
-    silent: false,
+    body:       'Nothing is expected from you.',
+    gentleBody: 'There\'s no expectation on you.',
+    silent:     false,
   },
 };
 
@@ -58,21 +62,38 @@ async function dispatch(userId, triggerType, body, silent = false) {
   await logNotificationSent(userId, triggerType, channel);
 }
 
+// ─── Copy selection ───────────────────────────────────────────────────────────
+
+/**
+ * @param {string} triggerType
+ * @param {{ tone?: string }} [context]
+ * @returns {{ body: string, silent: boolean } | null}
+ */
+function resolveCopy(triggerType, context = {}) {
+  const template = NOTIFICATION_COPY[triggerType];
+  if (!template) return null;
+
+  const isGentle = context.tone === TONES.GENTLE;
+  const body     = (isGentle && template.gentleBody) ? template.gentleBody : template.body;
+
+  return { body, silent: template.silent };
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * @param {string} userId
  * @param {string} triggerType
  * @param {string} [state]
+ * @param {{ continuityTag?: string, tone?: string }} [context]
  */
-export async function sendPresenceNotification(userId, triggerType, state = null) {
-  const copy = NOTIFICATION_COPY[triggerType];
+export async function sendPresenceNotification(userId, triggerType, state = null, context = {}) {
+  const copy = resolveCopy(triggerType, context);
   if (!copy) return;
   await dispatch(userId, triggerType, copy.body, copy.silent);
 }
 
 /**
- * Weekly reflection — reflection text is the entire message.
  * @param {string} userId
  * @param {string} reflectionText
  */
@@ -82,7 +103,6 @@ export async function sendReflectionNotification(userId, reflectionText) {
 }
 
 /**
- * Night open — SURVIVAL, no suppression gate.
  * @param {string} userId
  */
 export async function maybeSendNightNotification(userId) {

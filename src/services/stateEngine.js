@@ -1,5 +1,5 @@
 /**
- * services/stateEngine.js — State Engine v2
+ * services/stateEngine.js — State Engine v3
  *
  * Passive signal collection, state inference, smoothing, confidence thresholds.
  * Called from today.js. Writes to users/{userId}/todayState/{dateKey}.
@@ -9,11 +9,22 @@
  *   SURVIVAL      — immediate: night window OR hard absence signal
  *   LOW_CAPACITY  — default when evidence is weak
  *   STABLE        — requires multiple positive signals + smoothing
+ *
+ * Phase 3 additions:
+ *   - resolveAndPersistState returns continuityTag and tone
+ *   - History read delegated to historyStore
+ *   - patternEngine and toneEngine consulted after state resolution
  */
 
 import { db } from '../lib/firebase.js';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { getTodayKey } from '../utils.js';
+
+// ─── Phase 3 services ─────────────────────────────────────────────────────────
+
+import { getRecentHistory }     from './historyStore.js';
+import { deriveContinuityTag }  from './patternEngine.js';
+import { resolveTone }          from './toneEngine.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -68,7 +79,6 @@ async function getRecentStates(userId, daysBack = 3) {
 
 /**
  * Smoothing score: count of recent days that were not SURVIVAL.
- * Used to prevent STABLE from snapping on after a hard run.
  */
 function computeSmoothScore(recentStates) {
   return recentStates.filter(s => s !== STATES.SURVIVAL).length;
@@ -131,15 +141,11 @@ export async function getCachedTodayState(userId) {
 
 /**
  * Write the resolved state to todayState and dailySignals.
- *
- * todayState/{dateKey}   — current state + metadata
- * dailySignals/{dateKey} — passive signal snapshot for aggregation
  */
 export async function writeTodayState(userId, state, signals = {}) {
   const dateKey = getTodayKey();
   const now = new Date();
 
-  // Write resolved state
   try {
     await setDoc(
       doc(db, 'users', userId, 'todayState', dateKey),
@@ -148,7 +154,7 @@ export async function writeTodayState(userId, state, signals = {}) {
         computedAt: serverTimestamp(),
         hour: now.getHours(),
         isNight: isNightWindow(now),
-        ...( signals.gapHours     !== undefined && { gapHours:        signals.gapHours }),
+        ...( signals.gapHours        !== undefined && { gapHours:        signals.gapHours }),
         ...( signals.habitsDoneRatio !== undefined && { habitsDoneRatio: signals.habitsDoneRatio }),
       },
       { merge: true }
@@ -157,15 +163,14 @@ export async function writeTodayState(userId, state, signals = {}) {
     // Non-critical
   }
 
-  // Write daily signals snapshot (additive — never overwrites prior keys)
   try {
     await setDoc(
       doc(db, 'users', userId, 'dailySignals', dateKey),
       {
         dateKey,
-        lastUpdated: serverTimestamp(),
-        gapHours:         signals.gapHours         ?? null,
-        habitsDoneRatio:  signals.habitsDoneRatio   ?? null,
+        lastUpdated:      serverTimestamp(),
+        gapHours:         signals.gapHours        ?? null,
+        habitsDoneRatio:  signals.habitsDoneRatio  ?? null,
         resolvedState:    state,
       },
       { merge: true }
@@ -179,14 +184,21 @@ export async function writeTodayState(userId, state, signals = {}) {
 
 /**
  * Compute and persist today's state from raw signals.
+ * Phase 3: also derives continuityTag and tone from recent history.
  *
  * @param {string} userId
  * @param {{ gapHours: number, habitsDoneRatio: number }} rawSignals
  * @param {Date} [now]
- * @returns {Promise<{ state: string, isNight: boolean }>}
+ * @returns {Promise<{
+ *   state:         string,
+ *   isNight:       boolean,
+ *   signals:       object,
+ *   continuityTag: string,
+ *   tone:          string,
+ * }>}
  */
 export async function resolveAndPersistState(userId, rawSignals, now = new Date()) {
-  // Fetch smoothing context in background (non-blocking for initial render)
+  // Phase 2: smoothing score from todayState history (3 days)
   let smoothScore = 0;
   try {
     const recent = await getRecentStates(userId, 3);
@@ -199,8 +211,21 @@ export async function resolveAndPersistState(userId, rawSignals, now = new Date(
   const state   = inferState(signals, now);
   const isNight = isNightWindow(now);
 
-  // Fire-and-forget persist
+  // Fire-and-forget persist (Phase 2 writes)
   writeTodayState(userId, state, rawSignals).catch(() => null);
 
-  return { state, isNight, signals };
+  // ── Phase 3: derive continuity context ──────────────────────────────────────
+
+  let continuityTag = 'NEUTRAL';
+  let tone          = 'STEADY';
+
+  try {
+    const history = await getRecentHistory(userId, 7);
+    continuityTag = deriveContinuityTag(history);
+    tone = resolveTone({ state, continuityTag, nightOpen: isNight });
+  } catch {
+    // Non-critical — fall through with defaults
+  }
+
+  return { state, isNight, signals, continuityTag, tone };
 }

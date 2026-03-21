@@ -7,53 +7,44 @@
  * Reads:  users/{userId}/dailySignals/{dateKey}
  * Writes: users/{userId}/reflections/{weekKey}
  *         users/{userId}/presence/config  (lastReflectionKey)
+ *
+ * Phase 3:
+ * - maybeGenerateWeeklyReflection accepts { continuityTag, tone } context
+ * - generateReflection uses continuityTag as primary selection signal
+ * - All selection is deterministic — no randomness
  */
 
 import { db } from '../lib/firebase.js';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { getTodayKey } from '../utils.js';
 import { STATES } from './stateEngine.js';
+import { CONTINUITY_TAGS } from './patternEngine.js';
 import { shouldFireWeeklyReflection } from './presenceEngine.js';
 import { sendReflectionNotification } from './notificationService.js';
 
 // ─── Reflection copy ──────────────────────────────────────────────────────────
-//
-// Two lines maximum per category. No variation beyond that.
-// No expressive phrasing. No subject performing an action.
-// Direct, minimal, non-interpretive.
 
-const REFLECTION_TEMPLATES = {
-  mostlySurvival: [
-    'It\'s been heavy.',
-    'Things have been hard.',
-  ],
-  mixed: [
-    'It\'s been uneven.',
-    'It\'s shifted a bit.',
-  ],
-  mostlyStable: [
-    'There\'s been more space.',
-    'Things have been steadier.',
-  ],
-  default: [
-    'Time has passed.',
-  ],
+const REFLECTION_BY_TAG = {
+  [CONTINUITY_TAGS.SUSTAINED_HARD]:   'It\'s been a heavy week.',
+  [CONTINUITY_TAGS.IMPROVING]:        'It\'s been a little lighter.',
+  [CONTINUITY_TAGS.DECLINING]:        'It\'s been an uneven week.',
+  [CONTINUITY_TAGS.SUSTAINED_STABLE]: 'It\'s been a steadier week.',
+  [CONTINUITY_TAGS.NEUTRAL]:          'Another week has passed.',
 };
 
-// Minimal alternation — not content rotation, just avoids exact repetition.
-function pickRandom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
+const REFLECTION_BY_SIGNAL = {
+  mostlySurvival: 'It\'s been a heavy week.',
+  mostlyStable:   'It\'s been a steadier week.',
+  mixed:          'It\'s been an uneven week.',
+  default:        'Another week has passed.',
+};
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
-/**
- * Returns an ISO-ish week key like "2025-W03".
- */
 function getWeekKey(now = new Date()) {
   const d = new Date(now);
-  const day = d.getDay() || 7; // make Sunday = 7
-  d.setDate(d.getDate() - day + 1); // move to Monday
+  const day = d.getDay() || 7;
+  d.setDate(d.getDate() - day + 1);
   const jan1 = new Date(d.getFullYear(), 0, 1);
   const week = Math.ceil(((d - jan1) / 86400000 + 1) / 7);
   return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
@@ -88,27 +79,32 @@ async function aggregateWeekSignals(userId) {
 // ─── Reflection generation ────────────────────────────────────────────────────
 
 /**
- * Choose an observational reflection sentence based on the week's signal pattern.
- * No counts, no percentages, no analytics language.
- * Exported so notificationService can receive the text directly.
- *
  * @param {Array} weekSignals
+ * @param {{ continuityTag?: string }} [context]
  * @returns {string}
  */
-export function generateReflection(weekSignals) {
-  if (weekSignals.length === 0) return pickRandom(REFLECTION_TEMPLATES.default);
+export function generateReflection(weekSignals, context = {}) {
+  const tag = context.continuityTag;
+
+  // Primary: tag-based — skip NEUTRAL to allow signal-based resolution below
+  if (tag && tag !== CONTINUITY_TAGS.NEUTRAL && REFLECTION_BY_TAG[tag]) {
+    return REFLECTION_BY_TAG[tag];
+  }
+
+  // Fallback: signal ratio
+  if (weekSignals.length === 0) return REFLECTION_BY_SIGNAL.default;
 
   const states = weekSignals.map(s => s.resolvedState).filter(Boolean);
-  if (states.length === 0) return pickRandom(REFLECTION_TEMPLATES.default);
+  if (states.length === 0) return REFLECTION_BY_SIGNAL.default;
 
   const total         = states.length;
   const survivalCount = states.filter(s => s === STATES.SURVIVAL).length;
   const stableCount   = states.filter(s => s === STATES.STABLE).length;
 
-  if (survivalCount / total >= 0.5) return pickRandom(REFLECTION_TEMPLATES.mostlySurvival);
-  if (stableCount   / total >= 0.5) return pickRandom(REFLECTION_TEMPLATES.mostlyStable);
+  if (survivalCount / total >= 0.5) return REFLECTION_BY_SIGNAL.mostlySurvival;
+  if (stableCount   / total >= 0.5) return REFLECTION_BY_SIGNAL.mostlyStable;
 
-  return pickRandom(REFLECTION_TEMPLATES.mixed);
+  return REFLECTION_BY_SIGNAL.mixed;
 }
 
 // ─── Persistence helpers ──────────────────────────────────────────────────────
@@ -125,7 +121,6 @@ async function getLastReflectionKey(userId) {
 async function saveReflection(userId, weekKey, text, signalCount) {
   const dateKey = getTodayKey();
   try {
-    // Write the reflection document
     await setDoc(
       doc(db, 'users', userId, 'reflections', weekKey),
       {
@@ -136,8 +131,6 @@ async function saveReflection(userId, weekKey, text, signalCount) {
         createdAt: serverTimestamp(),
       }
     );
-
-    // Update last reflection key so we don't resend this week
     await setDoc(
       doc(db, 'users', userId, 'presence', 'config'),
       { lastReflectionKey: dateKey },
@@ -151,25 +144,19 @@ async function saveReflection(userId, weekKey, text, signalCount) {
 // ─── Main entry ───────────────────────────────────────────────────────────────
 
 /**
- * Run the weekly reflection pipeline if today is Sunday and one hasn't
- * been sent this week yet.
- *
- * Call from today.js init — fire-and-forget, never blocks render.
- *
  * @param {string} userId
+ * @param {{ continuityTag?: string, tone?: string }} [context]
  */
-export async function maybeGenerateWeeklyReflection(userId) {
+export async function maybeGenerateWeeklyReflection(userId, context = {}) {
   try {
     const lastKey = await getLastReflectionKey(userId);
     if (!shouldFireWeeklyReflection(lastKey)) return;
 
     const weekSignals = await aggregateWeekSignals(userId);
-    const text        = generateReflection(weekSignals);
+    const text        = generateReflection(weekSignals, context);
     const weekKey     = getWeekKey();
 
     await saveReflection(userId, weekKey, text, weekSignals.length);
-
-    // Pass generated text directly into notification body — no placeholder copy
     await sendReflectionNotification(userId, text);
   } catch {
     // Non-critical — never surfaces to user
