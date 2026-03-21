@@ -14,7 +14,7 @@
 
 import { STATES } from './stateEngine.js';
 import { CONTINUITY_TAGS } from './patternEngine.js';
-import { TODAY_COPY_MAP }   from '../content/todayCopyMap.js';
+import { TODAY_COPY_MAP }   from './todayCopyMap.js';
 
 // ─── Disallowed patterns ──────────────────────────────────────────────────────
 

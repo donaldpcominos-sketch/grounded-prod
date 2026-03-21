@@ -18,7 +18,7 @@ import {
   TODAY_COPY_MAP,
   NIGHT_COPY,
   FALLBACK_COPY,
-} from '../content/todayCopyMap.js';
+} from './todayCopyMap.js';
 import { CONTINUITY_TAGS } from './patternEngine.js';
 
 // ─── Variant branch ───────────────────────────────────────────────────────────
