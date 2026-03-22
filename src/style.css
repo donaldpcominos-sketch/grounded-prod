@@ -4144,31 +4144,46 @@ body {
 }
 
 .push-note { font-size: 12px; color: var(--color-ink-4); font-style: italic; }
-/* ─── Habits crown (all habits complete) ───────────────────────────────────── */
+/* ─── Calendar dot: crown replaces day number on full days ─────────────────── */
 
-.habits-pills-header-left {
+.cal-dot-crown {
+  font-size: 14px;
+  line-height: 1;
+  display: block;
+}
+
+/* ─── Streaks: top 3 highlighted rows + expandable rest ────────────────────── */
+
+.habit-streak-row--active {
+  /* No extra style needed — active is conveyed via badge */
+}
+
+.streaks-rest {
+  /* shown/hidden via the `hidden` attribute */
+}
+
+.streaks-toggle-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 8px 0 2px;
+  background: none;
+  border: none;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-ink-3);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.15s ease;
 }
 
-.habits-crown {
-  font-size: 20px;
+.streaks-toggle-btn:active {
+  color: var(--color-ink);
+}
+
+.streaks-toggle-arrow {
+  font-size: 11px;
   line-height: 1;
-  display: inline-block;
-}
-
-.habits-crown--animate {
-  animation: crown-appear 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-
-@keyframes crown-appear {
-  from {
-    opacity: 0;
-    transform: scale(0.4) rotate(-15deg) translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) rotate(0deg) translateY(0);
-  }
 }

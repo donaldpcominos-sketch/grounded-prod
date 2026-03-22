@@ -28,23 +28,19 @@ function getDayDoneCount(logsMap, dateKey) {
   return HABITS.filter(h => habits[h.id] === true).length;
 }
 
-function allHabitsDone(habits) {
-  return HABITS.length > 0 && HABITS.every(h => habits[h.id] === true);
+// Returns habits sorted by streak descending
+function getSortedByStreak(streaks) {
+  return [...HABITS].sort((a, b) => (streaks[b.id] || 0) - (streaks[a.id] || 0));
 }
 
 // ─── Render: habit toggle pills ───────────────────────────────────────────────
 
 function renderHabitPills(habits, activeDate, isToday) {
   const dateLabel = isToday ? 'Today' : formatShortDate(activeDate);
-  const allDone   = isToday && allHabitsDone(habits);
-
   return `
     <div class="habits-pills-section" id="habitsPillsSection">
       <div class="habits-pills-header">
-        <div class="habits-pills-header-left">
-          <p class="habits-pills-date">${dateLabel}</p>
-          ${allDone ? '<span class="habits-crown" aria-label="All habits complete">\uD83D\uDC51</span>' : ''}
-        </div>
+        <p class="habits-pills-date">${dateLabel}</p>
         ${!isToday ? '<p class="habits-pills-hint">Logging a past day</p>' : ''}
       </div>
       <div class="habits-pills-list">
@@ -90,14 +86,18 @@ function renderCalendar(calendarDays, logsMap, activeDate) {
           const pct = total > 0 ? doneCount / total : 0;
           const fillClass = getFillClass(pct, day.isFuture);
           const isActive = day.dateKey === activeDate;
+          const isFull = fillClass === 'cal-dot--full';
           return `
             <button
               class="cal-dot ${fillClass}${isActive ? ' cal-dot--active' : ''}${day.isToday ? ' cal-dot--today' : ''}"
               data-cal-date="${day.dateKey}"
-              aria-label="${formatDisplayDate(day.dateKey)}: ${doneCount} of ${total}"
+              aria-label="${formatDisplayDate(day.dateKey)}: ${doneCount} of ${total}${isFull ? ' \u2014 all done!' : ''}"
               ${day.isFuture ? 'disabled' : ''}
             >
-              <span class="cal-dot-day">${day.dayOfMonth}</span>
+              ${isFull
+                ? `<span class="cal-dot-crown" aria-hidden="true">\uD83D\uDC51</span>`
+                : `<span class="cal-dot-day">${day.dayOfMonth}</span>`
+              }
             </button>
           `;
         }).join('')}
@@ -107,39 +107,55 @@ function renderCalendar(calendarDays, logsMap, activeDate) {
         <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--low"></div><span>Some</span></div>
         <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--mid"></div><span>Half</span></div>
         <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--most"></div><span>Most</span></div>
-        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--full"></div><span>All \u2736</span></div>
+        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--full"></div><span>All \uD83D\uDC51</span></div>
       </div>
     </div>
   `;
 }
 
-// ─── Render: streaks ──────────────────────────────────────────────────────────
+// ─── Render: streaks (top 3 + expandable rest) ────────────────────────────────
 
 function renderStreaks(streaks) {
+  const sorted = getSortedByStreak(streaks);
+  const top3   = sorted.slice(0, 3);
+  const rest   = sorted.slice(3);
+  const hasRest = rest.length > 0;
+
+  function streakRow(h) {
+    const streak = streaks[h.id] || 0;
+    const active = streak > 0;
+    return `
+      <div class="habit-streak-row${active ? ' habit-streak-row--active' : ''}" data-streak-id="${h.id}">
+        <span class="habit-streak-emoji">${h.emoji}</span>
+        <span class="habit-streak-label">${h.label}</span>
+        <div class="habit-streak-badge${active ? ' habit-streak-badge--active' : ''}">
+          ${active
+            ? `<span class="streak-flame">\uD83D\uDD25</span><span class="streak-num">${streak}</span>`
+            : `<span class="streak-zero">\u2014</span>`}
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div class="habits-streaks-section" id="habitsStreaksSection">
       <p class="habits-section-label">Streaks</p>
       <div class="habits-streaks-list">
-        ${HABITS.map(h => {
-          const streak = streaks[h.id] || 0;
-          return `
-            <div class="habit-streak-row" data-streak-id="${h.id}">
-              <span class="habit-streak-emoji">${h.emoji}</span>
-              <span class="habit-streak-label">${h.label}</span>
-              <div class="habit-streak-badge${streak > 0 ? ' habit-streak-badge--active' : ''}">
-                ${streak > 0
-                  ? `<span class="streak-flame">\uD83D\uDD25</span><span class="streak-num">${streak}</span>`
-                  : `<span class="streak-zero">\u2014</span>`}
-              </div>
-            </div>
-          `;
-        }).join('')}
+        ${top3.map(streakRow).join('')}
+        ${hasRest ? `
+          <div class="streaks-rest" id="streaksRest" hidden>
+            ${rest.map(streakRow).join('')}
+          </div>
+          <button class="streaks-toggle-btn" id="streaksToggleBtn" aria-expanded="false">
+            Show all <span class="streaks-toggle-arrow">\u2193</span>
+          </button>
+        ` : ''}
       </div>
     </div>
   `;
 }
 
-// ─── Full view (initial paint only) ──────────────────────────────────────────
+// ─── Full view ────────────────────────────────────────────────────────────────
 
 function renderView(habits, logsMap, streaks, calendarDays, activeDate, todayKey) {
   return `
@@ -165,7 +181,7 @@ function renderView(habits, logsMap, streaks, calendarDays, activeDate, todayKey
   `;
 }
 
-// ─── Surgical DOM updaters (no scroll jump) ────────────────────────────────────
+// ─── Surgical DOM updaters ─────────────────────────────────────────────────────
 
 function patchPill(habitId, done) {
   const btn = document.querySelector(`[data-habit-id="${habitId}"]`);
@@ -176,23 +192,6 @@ function patchPill(habitId, done) {
   if (check) check.textContent = done ? '\u2713' : '';
 }
 
-function patchCrown(habits, activeDate, todayKey) {
-  if (activeDate !== todayKey) return;
-  const headerLeft = document.querySelector('.habits-pills-header-left');
-  if (!headerLeft) return;
-  const existing = headerLeft.querySelector('.habits-crown');
-  const allDone = allHabitsDone(habits);
-  if (allDone && !existing) {
-    const crown = document.createElement('span');
-    crown.className = 'habits-crown habits-crown--animate';
-    crown.setAttribute('aria-label', 'All habits complete');
-    crown.textContent = '\uD83D\uDC51';
-    headerLeft.appendChild(crown);
-  } else if (!allDone && existing) {
-    existing.remove();
-  }
-}
-
 function patchCalDot(dateKey, logsMap) {
   const btn = document.querySelector(`[data-cal-date="${dateKey}"]`);
   if (!btn) return;
@@ -200,18 +199,30 @@ function patchCalDot(dateKey, logsMap) {
   const doneCount = getDayDoneCount(logsMap, dateKey);
   const pct = total > 0 ? doneCount / total : 0;
   const fillClass = getFillClass(pct, false);
+  const isFull = fillClass === 'cal-dot--full';
+
   btn.classList.remove('cal-dot--empty', 'cal-dot--low', 'cal-dot--mid', 'cal-dot--most', 'cal-dot--full');
   btn.classList.add(fillClass);
-  btn.setAttribute('aria-label', `${formatDisplayDate(dateKey)}: ${doneCount} of ${total}`);
+  btn.setAttribute('aria-label', `${formatDisplayDate(dateKey)}: ${doneCount} of ${total}${isFull ? ' \u2014 all done!' : ''}`);
+
+  if (isFull) {
+    btn.innerHTML = `<span class="cal-dot-crown" aria-hidden="true">\uD83D\uDC51</span>`;
+  } else {
+    const dayNum = new Date(dateKey + 'T12:00:00').getDate();
+    btn.innerHTML = `<span class="cal-dot-day">${dayNum}</span>`;
+  }
 }
 
 function patchStreak(habitId, streak) {
+  // Update whichever row currently exists in the DOM for this habit
   const row = document.querySelector(`[data-streak-id="${habitId}"]`);
   if (!row) return;
+  const active = streak > 0;
+  row.className = `habit-streak-row${active ? ' habit-streak-row--active' : ''}`;
   const badge = row.querySelector('.habit-streak-badge');
   if (!badge) return;
-  badge.className = `habit-streak-badge${streak > 0 ? ' habit-streak-badge--active' : ''}`;
-  badge.innerHTML = streak > 0
+  badge.className = `habit-streak-badge${active ? ' habit-streak-badge--active' : ''}`;
+  badge.innerHTML = active
     ? `<span class="streak-flame">\uD83D\uDD25</span><span class="streak-num">${streak}</span>`
     : `<span class="streak-zero">\u2014</span>`;
 }
@@ -222,6 +233,37 @@ function rebuildPillsSection(habits, activeDate, todayKey) {
   const fresh = document.createElement('div');
   fresh.innerHTML = renderHabitPills(habits, activeDate, activeDate === todayKey);
   section.replaceWith(fresh.firstElementChild);
+}
+
+function rebuildStreaksSection(streaks) {
+  const section = document.getElementById('habitsStreaksSection');
+  if (!section) return;
+  const fresh = document.createElement('div');
+  fresh.innerHTML = renderStreaks(streaks);
+  section.replaceWith(fresh.firstElementChild);
+  bindStreaksToggle();
+}
+
+// ─── Streaks toggle ───────────────────────────────────────────────────────────
+
+function bindStreaksToggle() {
+  const btn  = document.getElementById('streaksToggleBtn');
+  const rest = document.getElementById('streaksRest');
+  if (!btn || !rest) return;
+
+  btn.addEventListener('click', () => {
+    const expanded = btn.getAttribute('aria-expanded') === 'true';
+    const arrow    = btn.querySelector('.streaks-toggle-arrow');
+    if (expanded) {
+      rest.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+      btn.innerHTML = `Show all <span class="streaks-toggle-arrow">\u2193</span>`;
+    } else {
+      rest.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      btn.innerHTML = `Show less <span class="streaks-toggle-arrow">\u2191</span>`;
+    }
+  });
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -254,6 +296,7 @@ export const HabitsView = {
 
     bindPillEvents();
     bindCalEvents();
+    bindStreaksToggle();
 
     function bindPillEvents() {
       document.querySelectorAll('[data-habit-id]').forEach(btn => {
@@ -264,24 +307,30 @@ export const HabitsView = {
 
           activeHabits[habitId] = newVal;
           currentLogs[activeDate] = { ...(currentLogs[activeDate] || {}), [habitId]: newVal };
+          const prevStreaks = { ...currentStreaks };
           currentStreaks = computeStreaks(currentLogs, todayKey);
 
           patchPill(habitId, newVal);
-          patchCrown(activeHabits, activeDate, todayKey);
           patchCalDot(activeDate, currentLogs);
-          patchStreak(habitId, currentStreaks[habitId] || 0);
+
+          // If streak rank order changed, rebuild streaks section; otherwise patch in place
+          const rankChanged = getSortedByStreak(currentStreaks).map(h => h.id).join()
+            !== getSortedByStreak(prevStreaks).map(h => h.id).join();
+          if (rankChanged) {
+            rebuildStreaksSection(currentStreaks);
+          } else {
+            patchStreak(habitId, currentStreaks[habitId] || 0);
+          }
 
           try {
             await toggleHabit(user.uid, activeDate, habitId, newVal);
           } catch {
-            // Rollback
             activeHabits[habitId] = current;
             currentLogs[activeDate][habitId] = current;
             currentStreaks = computeStreaks(currentLogs, todayKey);
             patchPill(habitId, current);
-            patchCrown(activeHabits, activeDate, todayKey);
             patchCalDot(activeDate, currentLogs);
-            patchStreak(habitId, currentStreaks[habitId] || 0);
+            rebuildStreaksSection(currentStreaks);
             showToast('Save failed \u2014 try again', 'error');
           }
         });

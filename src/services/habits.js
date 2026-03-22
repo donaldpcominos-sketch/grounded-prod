@@ -29,7 +29,6 @@ export async function getHabitLog(userId, dateKey) {
 }
 
 export async function getHabitLogsRange(userId, startKey, endKey) {
-  // Returns a map of { dateKey: { habitId: bool } } for the date range
   const colRef = collection(db, 'users', userId, 'habitLogs');
   const q = query(colRef, orderBy('__name__'), limit(60));
   const snap = await getDocs(q);
@@ -60,8 +59,6 @@ export async function toggleHabit(userId, dateKey, habitId, value) {
 }
 
 // ─── Streak calculation ───────────────────────────────────────────────────────
-// A streak for a habit = consecutive days ending today (or yesterday if today not yet logged)
-// where the habit was marked done. Grace day: one missed day doesn't break it.
 
 export function computeStreaks(logsMap, todayKey) {
   const streaks = {};
