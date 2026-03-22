@@ -1,143 +1,109 @@
+// src/services/habits.js
 import { db } from '../lib/firebase.js';
-import { doc, getDoc, setDoc, getDocs, collection, query, orderBy, limit } from 'firebase/firestore';
-import { getTodayKey } from '../utils.js';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 // ─── Habit definitions ────────────────────────────────────────────────────────
-// Single source of truth. Order here = display order.
 
 export const HABITS = [
-  { id: 'read',        label: 'Read my book',            emoji: '📚', color: '#c8956b' },
-  { id: 'workout',     label: 'Workout',                 emoji: '🏋️', color: '#b07060' },
-  { id: 'journal',     label: 'Journal',                 emoji: '📓', color: '#7a9e7e' },
-  { id: 'kiss',        label: 'Kiss my husband',         emoji: '💋', color: '#c47a8a' },
-  { id: 'outside',     label: '10 min outside',          emoji: '🌿', color: '#5e8c6a' },
-  { id: 'winddown',    label: 'Screen-free wind down',   emoji: '🌙', color: '#7b7fad' },
-  { id: 'vitamins',    label: 'Take my vitamins',        emoji: '💊', color: '#6a9fa8' },
-  { id: 'friend',      label: 'Called or texted a friend', emoji: '📞', color: '#9b89c4' },
-  { id: 'skincare',    label: 'Skin care routine',       emoji: '✨', color: '#c4a882' },
-  { id: 'me-time',     label: '20 min to myself',        emoji: '🫧', color: '#a09890' },
+  { id: 'no-alcohol',    label: 'No alcohol',          emoji: '🚫',  color: '#c97b6a' },
+  { id: 'steps-10k',     label: '10k steps',            emoji: '👟',  color: '#7a9e7e' },
+  { id: 'water-3l',      label: '3L water',             emoji: '💧',  color: '#6a8fb5' },
+  { id: 'no-phone',      label: '1hr no phone time',    emoji: '📵',  color: '#9b8bb4' },
+  { id: 'send-love',     label: 'Send Love 📱',         emoji: '💌',  color: '#c98b8b' },
+  { id: 'sleep',         label: 'Early to bed',         emoji: '🌙',  color: '#7a8fa3' },
 ];
 
-// ─── Read ─────────────────────────────────────────────────────────────────────
+// ─── Firestore helpers ────────────────────────────────────────────────────────
 
 export async function getHabitLog(userId, dateKey) {
   const ref = doc(db, 'users', userId, 'habitLogs', dateKey);
   const snap = await getDoc(ref);
-  if (!snap.exists()) return {};
-  return snap.data().habits || {};
+  return snap.exists() ? snap.data() : {};
 }
 
 export async function getHabitLogsRange(userId, startKey, endKey) {
-  // Returns a map of { dateKey: { habitId: bool } } for the date range
-  // We fetch the last 28 docs ordered by date desc then rebuild into a map
-  const colRef = collection(db, 'users', userId, 'habitLogs');
-  const q = query(colRef, orderBy('__name__'), limit(60));
-  const snap = await getDocs(q);
-  const result = {};
-  snap.forEach(d => {
-    const dateKey = d.id;
-    if (dateKey >= startKey && dateKey <= endKey) {
-      result[dateKey] = d.data().habits || {};
-    }
-  });
-  return result;
-}
+  // Fetch all dates in range individually (small range — 4 weeks = 28 docs)
+  const dates = [];
+  const start = new Date(startKey + 'T12:00:00');
+  const end   = new Date(endKey   + 'T12:00:00');
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
 
-// ─── Write ────────────────────────────────────────────────────────────────────
+  const results = await Promise.all(
+    dates.map(async (dateKey) => {
+      const ref  = doc(db, 'users', userId, 'habitLogs', dateKey);
+      const snap = await getDoc(ref);
+      return { dateKey, data: snap.exists() ? snap.data() : {} };
+    })
+  );
 
-export async function saveHabitLog(userId, dateKey, habits) {
-  const ref = doc(db, 'users', userId, 'habitLogs', dateKey);
-  await setDoc(ref, { date: dateKey, habits }, { merge: true });
+  const map = {};
+  results.forEach(({ dateKey, data }) => { map[dateKey] = data; });
+  return map;
 }
 
 export async function toggleHabit(userId, dateKey, habitId, value) {
   const ref = doc(db, 'users', userId, 'habitLogs', dateKey);
-  const snap = await getDoc(ref);
-  const existing = snap.exists() ? (snap.data().habits || {}) : {};
-  const updated = { ...existing, [habitId]: value };
-  await setDoc(ref, { date: dateKey, habits: updated }, { merge: true });
-  return updated;
+  await setDoc(ref, { [habitId]: value }, { merge: true });
 }
 
-// ─── Streak calculation ───────────────────────────────────────────────────────
-// A streak for a habit = consecutive days ending today (or yesterday if today not yet logged)
-// where the habit was marked done. Grace day: one missed day doesn't break it.
+// ─── Streak computation ───────────────────────────────────────────────────────
 
 export function computeStreaks(logsMap, todayKey) {
   const streaks = {};
-  for (const habit of HABITS) {
-    streaks[habit.id] = computeStreak(logsMap, habit.id, todayKey);
-  }
+
+  HABITS.forEach(h => {
+    let streak = 0;
+    const today = new Date(todayKey + 'T12:00:00');
+
+    for (let i = 0; i < 365; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const log = logsMap[key] || {};
+
+      // Skip today if not yet logged (don't break streak)
+      if (i === 0 && log[h.id] !== true) continue;
+      if (log[h.id] === true) { streak++; }
+      else { break; }
+    }
+
+    streaks[h.id] = streak;
+  });
+
   return streaks;
 }
 
-function computeStreak(logsMap, habitId, todayKey) {
-  const days = getSortedDaysDesc(todayKey, 90);
-  let streak = 0;
-  let missedOnce = false;
+// ─── Calendar helpers ─────────────────────────────────────────────────────────
 
-  for (const day of days) {
-    const done = logsMap[day]?.[habitId] === true;
-    if (done) {
-      streak++;
-      missedOnce = false;
-    } else {
-      if (!missedOnce && streak > 0) {
-        // Allow one grace day mid-streak
-        missedOnce = true;
-      } else {
-        break;
-      }
-    }
+export function buildCalendarDays(todayKey) {
+  const today = new Date(todayKey + 'T12:00:00');
+  // Start from Monday 4 weeks ago
+  const startDay = new Date(today);
+  startDay.setDate(startDay.getDate() - 27);
+  // Align to Monday
+  const dow = startDay.getDay(); // 0=Sun
+  const offset = dow === 0 ? 6 : dow - 1;
+  startDay.setDate(startDay.getDate() - offset);
+
+  const days = [];
+  for (let i = 0; i < 35; i++) {
+    const d = new Date(startDay);
+    d.setDate(d.getDate() + i);
+    const dateKey = d.toISOString().slice(0, 10);
+    days.push({
+      dateKey,
+      dayOfMonth: d.getDate(),
+      isToday: dateKey === todayKey,
+      isFuture: dateKey > todayKey,
+    });
   }
-  return streak;
-}
-
-// ─── Date helpers ─────────────────────────────────────────────────────────────
-
-export function getDateKey(date) {
-  return date.toISOString().slice(0, 10);
+  return days;
 }
 
 export function getNWeeksAgoKey(n) {
   const d = new Date();
   d.setDate(d.getDate() - n * 7);
-  return getDateKey(d);
-}
-
-function getSortedDaysDesc(todayKey, count) {
-  const days = [];
-  const d = new Date(todayKey + 'T12:00:00');
-  for (let i = 0; i < count; i++) {
-    days.push(getDateKey(d));
-    d.setDate(d.getDate() - 1);
-  }
-  return days;
-}
-
-// Returns array of { dateKey, dayOfMonth, dayOfWeek, isToday } for 4-week grid
-// starting from the Monday 4 weeks ago, ending today
-export function buildCalendarDays(todayKey) {
-  const today = new Date(todayKey + 'T12:00:00');
-  // Find the Monday of the current week
-  const dow = today.getDay(); // 0=Sun
-  const daysFromMon = dow === 0 ? 6 : dow - 1;
-  const startMonday = new Date(today);
-  startMonday.setDate(today.getDate() - daysFromMon - 21); // 3 more weeks back = 4 total
-
-  const days = [];
-  const cur = new Date(startMonday);
-  // Build 4 full weeks = 28 days
-  for (let i = 0; i < 28; i++) {
-    const key = getDateKey(cur);
-    days.push({
-      dateKey: key,
-      dayOfMonth: cur.getDate(),
-      dayOfWeek: cur.getDay(),
-      isToday: key === todayKey,
-      isFuture: key > todayKey
-    });
-    cur.setDate(cur.getDate() + 1);
-  }
-  return days;
+  return d.toISOString().slice(0, 10);
 }

@@ -28,14 +28,23 @@ function getDayDoneCount(logsMap, dateKey) {
   return HABITS.filter(h => habits[h.id] === true).length;
 }
 
+function allTodayHabitsDone(habits) {
+  return HABITS.length > 0 && HABITS.every(h => habits[h.id] === true);
+}
+
 // ─── Render: habit toggle pills ───────────────────────────────────────────────
 
 function renderHabitPills(habits, activeDate, isToday) {
   const dateLabel = isToday ? 'Today' : formatShortDate(activeDate);
+  const allDone   = isToday && allTodayHabitsDone(habits);
+
   return `
     <div class="habits-pills-section" id="habitsPillsSection">
       <div class="habits-pills-header">
-        <p class="habits-pills-date">${dateLabel}</p>
+        <div class="habits-pills-header-left">
+          <p class="habits-pills-date">${dateLabel}</p>
+          ${allDone ? '<span class="habits-crown" aria-label="All habits complete" title="All done!">👑</span>' : ''}
+        </div>
         ${!isToday ? '<p class="habits-pills-hint">Logging a past day</p>' : ''}
       </div>
       <div class="habits-pills-list">
@@ -51,7 +60,7 @@ function renderHabitPills(habits, activeDate, isToday) {
             >
               <span class="habit-pill-emoji">${h.emoji}</span>
               <span class="habit-pill-label">${h.label}</span>
-              <span class="habit-pill-check" aria-hidden="true">${done ? '✓' : ''}</span>
+              <span class="habit-pill-check" aria-hidden="true">${done ? '\u2713' : ''}</span>
             </button>
           `;
         }).join('')}
@@ -98,7 +107,7 @@ function renderCalendar(calendarDays, logsMap, activeDate) {
         <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--low"></div><span>Some</span></div>
         <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--mid"></div><span>Half</span></div>
         <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--most"></div><span>Most</span></div>
-        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--full"></div><span>All ✦</span></div>
+        <div class="cal-legend-item"><div class="cal-legend-dot cal-dot--full"></div><span>All \u2736</span></div>
       </div>
     </div>
   `;
@@ -119,8 +128,8 @@ function renderStreaks(streaks) {
               <span class="habit-streak-label">${h.label}</span>
               <div class="habit-streak-badge${streak > 0 ? ' habit-streak-badge--active' : ''}">
                 ${streak > 0
-                  ? `<span class="streak-flame">🔥</span><span class="streak-num">${streak}</span>`
-                  : `<span class="streak-zero">—</span>`}
+                  ? `<span class="streak-flame">\uD83D\uDD25</span><span class="streak-num">${streak}</span>`
+                  : `<span class="streak-zero">\u2014</span>`}
               </div>
             </div>
           `;
@@ -144,7 +153,7 @@ function renderView(habits, logsMap, streaks, calendarDays, activeDate, todayKey
               <p class="page-subtitle">${formatDisplayDate(todayKey)}</p>
             </div>
             <button class="habits-back-btn" id="habitsBackBtn" aria-label="Back to today">
-              ← Today
+              \u2190 Today
             </button>
           </div>
         </header>
@@ -164,7 +173,26 @@ function patchPill(habitId, done) {
   btn.classList.toggle('habit-pill--done', done);
   btn.setAttribute('aria-pressed', String(done));
   const check = btn.querySelector('.habit-pill-check');
-  if (check) check.textContent = done ? '✓' : '';
+  if (check) check.textContent = done ? '\u2713' : '';
+}
+
+function patchCrown(habits, activeDate, todayKey) {
+  if (activeDate !== todayKey) return;
+  const header = document.querySelector('.habits-pills-header-left');
+  if (!header) return;
+
+  const existing = header.querySelector('.habits-crown');
+  const allDone  = allTodayHabitsDone(habits);
+
+  if (allDone && !existing) {
+    const crown = document.createElement('span');
+    crown.className = 'habits-crown habits-crown--animate';
+    crown.setAttribute('aria-label', 'All habits complete');
+    crown.textContent = '\uD83D\uDC51';
+    header.appendChild(crown);
+  } else if (!allDone && existing) {
+    existing.remove();
+  }
 }
 
 function patchCalDot(dateKey, logsMap) {
@@ -186,8 +214,8 @@ function patchStreak(habitId, streak) {
   if (!badge) return;
   badge.className = `habit-streak-badge${streak > 0 ? ' habit-streak-badge--active' : ''}`;
   badge.innerHTML = streak > 0
-    ? `<span class="streak-flame">🔥</span><span class="streak-num">${streak}</span>`
-    : `<span class="streak-zero">—</span>`;
+    ? `<span class="streak-flame">\uD83D\uDD25</span><span class="streak-num">${streak}</span>`
+    : `<span class="streak-zero">\u2014</span>`;
 }
 
 function rebuildPillsSection(habits, activeDate, todayKey) {
@@ -243,6 +271,7 @@ export const HabitsView = {
           currentStreaks = computeStreaks(currentLogs, todayKey);
 
           patchPill(habitId, newVal);
+          patchCrown(activeHabits, activeDate, todayKey);
           patchCalDot(activeDate, currentLogs);
           patchStreak(habitId, currentStreaks[habitId] || 0);
 
@@ -254,6 +283,7 @@ export const HabitsView = {
             currentLogs[activeDate][habitId] = current;
             currentStreaks = computeStreaks(currentLogs, todayKey);
             patchPill(habitId, current);
+            patchCrown(activeHabits, activeDate, todayKey);
             patchCalDot(activeDate, currentLogs);
             patchStreak(habitId, currentStreaks[habitId] || 0);
             showToast('Save failed \u2014 try again', 'error');

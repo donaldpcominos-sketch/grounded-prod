@@ -4144,3 +4144,31 @@ body {
 }
 
 .push-note { font-size: 12px; color: var(--color-ink-4); font-style: italic; }
+/* ─── Habits crown (all habits complete) ───────────────────────────────────── */
+
+.habits-pills-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.habits-crown {
+  font-size: 20px;
+  line-height: 1;
+  display: inline-block;
+}
+
+.habits-crown--animate {
+  animation: crown-appear 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes crown-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.4) rotate(-15deg) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0deg) translateY(0);
+  }
+}
