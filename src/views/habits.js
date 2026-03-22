@@ -28,7 +28,7 @@ function getDayDoneCount(logsMap, dateKey) {
   return HABITS.filter(h => habits[h.id] === true).length;
 }
 
-function allTodayHabitsDone(habits) {
+function allHabitsDone(habits) {
   return HABITS.length > 0 && HABITS.every(h => habits[h.id] === true);
 }
 
@@ -36,14 +36,14 @@ function allTodayHabitsDone(habits) {
 
 function renderHabitPills(habits, activeDate, isToday) {
   const dateLabel = isToday ? 'Today' : formatShortDate(activeDate);
-  const allDone   = isToday && allTodayHabitsDone(habits);
+  const allDone   = isToday && allHabitsDone(habits);
 
   return `
     <div class="habits-pills-section" id="habitsPillsSection">
       <div class="habits-pills-header">
         <div class="habits-pills-header-left">
           <p class="habits-pills-date">${dateLabel}</p>
-          ${allDone ? '<span class="habits-crown" aria-label="All habits complete" title="All done!">👑</span>' : ''}
+          ${allDone ? '<span class="habits-crown" aria-label="All habits complete">\uD83D\uDC51</span>' : ''}
         </div>
         ${!isToday ? '<p class="habits-pills-hint">Logging a past day</p>' : ''}
       </div>
@@ -178,18 +178,16 @@ function patchPill(habitId, done) {
 
 function patchCrown(habits, activeDate, todayKey) {
   if (activeDate !== todayKey) return;
-  const header = document.querySelector('.habits-pills-header-left');
-  if (!header) return;
-
-  const existing = header.querySelector('.habits-crown');
-  const allDone  = allTodayHabitsDone(habits);
-
+  const headerLeft = document.querySelector('.habits-pills-header-left');
+  if (!headerLeft) return;
+  const existing = headerLeft.querySelector('.habits-crown');
+  const allDone = allHabitsDone(habits);
   if (allDone && !existing) {
     const crown = document.createElement('span');
     crown.className = 'habits-crown habits-crown--animate';
     crown.setAttribute('aria-label', 'All habits complete');
     crown.textContent = '\uD83D\uDC51';
-    header.appendChild(crown);
+    headerLeft.appendChild(crown);
   } else if (!allDone && existing) {
     existing.remove();
   }
@@ -248,7 +246,6 @@ export const HabitsView = {
     let currentStreaks = computeStreaks(currentLogs, todayKey);
     const calDays     = buildCalendarDays(todayKey);
 
-    // Initial full render — only time we set innerHTML on the container
     container.innerHTML = renderView(activeHabits, currentLogs, currentStreaks, calDays, activeDate, todayKey);
 
     document.getElementById('habitsBackBtn')?.addEventListener('click', () => {
@@ -265,7 +262,6 @@ export const HabitsView = {
           const current = activeHabits[habitId] === true;
           const newVal  = !current;
 
-          // Optimistic surgical patch — scroll position untouched
           activeHabits[habitId] = newVal;
           currentLogs[activeDate] = { ...(currentLogs[activeDate] || {}), [habitId]: newVal };
           currentStreaks = computeStreaks(currentLogs, todayKey);
@@ -298,7 +294,6 @@ export const HabitsView = {
           const dateKey = btn.dataset.calDate;
           if (dateKey === activeDate) return;
 
-          // Move active highlight
           document.querySelectorAll('[data-cal-date]').forEach(b => {
             b.classList.toggle('cal-dot--active', b.dataset.calDate === dateKey);
           });
@@ -315,11 +310,9 @@ export const HabitsView = {
 
           activeHabits = { ...(currentLogs[dateKey] || {}) };
 
-          // Rebuild pills section only (small swap, not full page)
           rebuildPillsSection(activeHabits, activeDate, todayKey);
           bindPillEvents();
 
-          // Scroll pills gently into view if they're offscreen
           setTimeout(() => {
             document.getElementById('habitsPillsSection')
               ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
