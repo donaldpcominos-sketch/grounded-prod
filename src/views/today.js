@@ -1,12 +1,13 @@
-import { getTodayWellnessCheckin, saveTodayWellnessCheckin } from '../services/wellness.js';
-import { touchLastActive, getLastActiveGap } from '../services/lastSeen.js';
+import { saveTodayWellnessCheckin } from '../services/wellness.js';
+import { touchLastActive } from '../services/lastSeen.js';
 import { getSuggestionsForEnergy } from '../data/nutrition.js';
-import { getTodayDisplay, getTodayKey, showToast } from '../utils.js';
+import { getTodayDisplay, showToast } from '../utils.js';
 import { fetchWeather } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
-import { getTodayWorkoutSession } from '../services/workouts.js';
-import { getHabitLog, HABITS } from '../services/habits.js';
+import { HABITS } from '../services/habits.js';
 import { navigateTo } from '../router.js';
+import { getDailyState } from '../domain/dailyState.js';
+import { getTodayRecommendations } from '../domain/recommendations.js';
 
 // ─── Weather card ─────────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ function renderWeatherCard(weather) {
     return `
       <div class="weather-card" id="weatherCard">
         <p class="card-label">Weather</p>
-        <p class="card-body mt-1" style="color:var(--color-ink-4);">Unavailable \u2014 check your connection.</p>
+        <p class="card-body mt-1" style="color:var(--color-ink-4);">Unavailable — check your connection.</p>
       </div>
     `;
   }
@@ -29,7 +30,7 @@ function renderWeatherCard(weather) {
   const { currentTemp, currentEmoji, currentDesc, currentUv, forecast, walkWindow, fromCache, cacheAgeMs } = weather;
 
   const staleNote = fromCache
-    ? `<p class="weather-stale-note">Offline \u2014 last updated ${Math.round(cacheAgeMs / 60000)} min ago</p>`
+    ? `<p class="weather-stale-note">Offline — last updated ${Math.round(cacheAgeMs / 60000)} min ago</p>`
     : '';
 
   const forecastHtml = (forecast || []).map(d => `
@@ -63,9 +64,9 @@ function renderWeatherCard(weather) {
 
 function getReturnMessage(gapHours) {
   if (gapHours <= 48) return null;
-  if (gapHours > 7 * 24) return { headline: 'You\u2019ve been away for a while.', sub: 'This is your space. Take your time \u2014 no catch-up needed.' };
-  if (gapHours > 3 * 24) return { headline: 'It\u2019s been a few days.', sub: 'Welcome back. No pressure \u2014 just checking in when you\u2019re ready.' };
-  return { headline: 'Good to see you again.', sub: 'It\u2019s been a couple of days. Start wherever feels right.' };
+  if (gapHours > 7 * 24) return { headline: 'You’ve been away for a while.', sub: 'This is your space. Take your time — no catch-up needed.' };
+  if (gapHours > 3 * 24) return { headline: 'It’s been a few days.', sub: 'Welcome back. No pressure — just checking in when you’re ready.' };
+  return { headline: 'Good to see you again.', sub: 'It’s been a couple of days. Start wherever feels right.' };
 }
 
 // ─── Quick check-in ───────────────────────────────────────────────────────────
@@ -134,6 +135,40 @@ function renderQuickCheckin(mood, energy) {
   `;
 }
 
+// ─── Priority actions ─────────────────────────────────────────────────────────
+
+function renderPriorityActions(recommendations) {
+  if (!Array.isArray(recommendations) || recommendations.length === 0) return '';
+
+  return `
+    <section class="card" id="priorityActionsCard">
+      <div class="card-row">
+        <div>
+          <p class="card-label">Priority actions</p>
+          <p class="card-body mt-1">A few gentle suggestions for today.</p>
+        </div>
+      </div>
+
+      <div class="mt-4">
+        ${recommendations.map(rec => `
+          <button
+            type="button"
+            class="priority-action"
+            data-rec-route="${rec.route || ''}"
+            aria-label="${rec.title}"
+          >
+            <div class="priority-action-copy">
+              <p class="priority-action-title">${rec.title}</p>
+              <p class="priority-action-text">${rec.message}</p>
+            </div>
+            <span class="priority-action-cta">${rec.actionLabel || 'Open'} →</span>
+          </button>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
 // ─── Nourishment card (prompts only, no tracking) ─────────────────────────────
 
 function energyEmoji(energy) {
@@ -187,9 +222,9 @@ function renderWorkoutTile(savedSession) {
 
   let statusLine = '';
   if (isDone && isAlternate) {
-    statusLine = `<span class="workout-tile-done workout-tile-done--alt">\u2713 ${savedSession.alternateLabel || 'Activity'} done</span>`;
+    statusLine = `<span class="workout-tile-done workout-tile-done--alt">✓ ${savedSession.alternateLabel || 'Activity'} done</span>`;
   } else if (isDone) {
-    statusLine = '<span class="workout-tile-done">\u2713 Done today</span>';
+    statusLine = '<span class="workout-tile-done">✓ Done today</span>';
   }
 
   return `
@@ -202,7 +237,7 @@ function renderWorkoutTile(savedSession) {
       <div class="workout-tile-right">
         <span class="tag ${getTypeColor(split.type)}">${getTypeTag(split.type)}</span>
         ${statusLine}
-        <span class="workout-tile-arrow">\u2192</span>
+        <span class="workout-tile-arrow">→</span>
       </div>
     </button>
   `;
@@ -210,14 +245,17 @@ function renderWorkoutTile(savedSession) {
 
 // ─── Habits entry tile ────────────────────────────────────────────────────────
 
-function renderHabitsTile(todayHabits) {
-  const doneCount = HABITS.filter(h => todayHabits[h.id] === true).length;
-  const total     = HABITS.length;
-  const allDone   = doneCount === total;
-  // Progress as fraction of circumference: circle r=14, circumference=87.96
-  // We use a viewBox-independent approach: stroke-dasharray out of 87.96
-  const circ      = 87.96;
-  const filled    = total > 0 ? (doneCount / total) * circ : 0;
+function renderHabitsTile(habitsState) {
+  const todayHabits = {};
+  (habitsState?.items || []).forEach(item => {
+    todayHabits[item.id] = item.completed === true;
+  });
+
+  const doneCount = habitsState?.completedCount ?? 0;
+  const total = habitsState?.totalCount ?? HABITS.length;
+  const allDone = total > 0 && doneCount === total;
+  const circ = 87.96;
+  const filled = total > 0 ? (doneCount / total) * circ : 0;
 
   return `
     <button class="habits-entry-tile" id="habitsTileBtn" aria-label="Open habits tracker">
@@ -236,15 +274,15 @@ function renderHabitsTile(todayHabits) {
                 stroke-dashoffset="0"/>
             </svg>
             ${allDone
-              ? '<span class="habits-ring-check">\u2713</span>'
-              : `<span class="habits-ring-pct">${Math.round((doneCount/total)*100)}%</span>`}
+              ? '<span class="habits-ring-check">✓</span>'
+              : `<span class="habits-ring-pct">${Math.round((doneCount / total) * 100)}%</span>`}
           </div>
-          <span class="workout-tile-arrow">\u2192</span>
+          <span class="workout-tile-arrow">→</span>
         </div>
       </div>
       <div class="habits-tile-preview">
-        ${HABITS.slice(0, 5).map(h => {
-          const done = todayHabits[h.id] === true;
+        ${(habitsState?.items || []).slice(0, 5).map(h => {
+          const done = h.completed === true;
           return `<span class="habits-preview-dot${done ? ' habits-preview-dot--done' : ''}" aria-hidden="true">${h.emoji}</span>`;
         }).join('')}
         ${total > 5 ? `<span class="habits-preview-more">+${total - 5}</span>` : ''}
@@ -264,13 +302,13 @@ function renderReturnCard(returnMsg) {
           <p class="return-card-headline">${returnMsg.headline}</p>
           <p class="return-card-sub">${returnMsg.sub}</p>
         </div>
-        <button class="return-card-dismiss" id="returnCardDismiss" aria-label="Dismiss">\u2715</button>
+        <button class="return-card-dismiss" id="returnCardDismiss" aria-label="Dismiss">✕</button>
       </div>
     </div>
   `;
 }
 
-function renderView(user, wellness, returnMsg, weather, savedSession, todayHabits) {
+function renderView(user, state, returnMsg, weather, recommendations) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -289,13 +327,14 @@ function renderView(user, wellness, returnMsg, weather, savedSession, todayHabit
         </header>
 
         ${renderReturnCard(returnMsg)}
+        ${renderPriorityActions(recommendations)}
         ${renderWeatherCard(weather)}
-        ${renderQuickCheckin(wellness.mood || '', wellness.energy || '')}
+        ${renderQuickCheckin(state.wellness.mood || '', state.wellness.energy || '')}
 
         <div class="card-stack">
-          ${renderWorkoutTile(savedSession)}
-          ${renderHabitsTile(todayHabits)}
-          ${renderNourishmentCard(wellness.energy || '')}
+          ${renderWorkoutTile(state.workout)}
+          ${renderHabitsTile(state.habits)}
+          ${renderNourishmentCard(state.wellness.energy || '')}
         </div>
 
         <p id="wellnessStatus" class="status-text mt-4 px-1"></p>
@@ -309,28 +348,57 @@ function renderView(user, wellness, returnMsg, weather, savedSession, todayHabit
 
 export const TodayView = {
   async init(container, user) {
-    container.innerHTML = '<div class="loading-state"><p>Loading your dashboard\u2026</p></div>';
+    container.innerHTML = '<div class="loading-state"><p>Loading your dashboard…</p></div>';
 
-    const todayKey = getTodayKey();
-
-    const [wellness, { gapHours }, weather, savedSession, todayHabits] = await Promise.all([
-      getTodayWellnessCheckin(user.uid),
-      getLastActiveGap(user.uid),
-      fetchWeather().catch(() => null),
-      getTodayWorkoutSession(user.uid).catch(() => null),
-      getHabitLog(user.uid, todayKey).catch(() => ({}))
+    const [state, weather] = await Promise.all([
+      getDailyState(user.uid),
+      fetchWeather().catch(() => null)
     ]);
 
     touchLastActive(user.uid);
 
-    const returnMsg = _returnDismissed ? null : getReturnMessage(gapHours);
+    const returnMsg = _returnDismissed ? null : getReturnMessage(state.lastSeen?.gapHours ?? 0);
 
-    container.innerHTML = renderView(user, wellness, returnMsg, weather, savedSession, todayHabits);
-
-    const wellnessState = {
-      mood:   wellness.mood   || '',
-      energy: wellness.energy || ''
+    const viewState = {
+      ...state,
+      wellness: { ...state.wellness }
     };
+
+    function getRecommendations() {
+      return getTodayRecommendations(viewState);
+    }
+
+    container.innerHTML = renderView(user, viewState, returnMsg, weather, getRecommendations());
+
+    const wellnessState = viewState.wellness;
+
+    function bindPriorityActions() {
+      document.querySelectorAll('[data-rec-route]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const route = btn.dataset.recRoute;
+          if (!route) return;
+
+          const cleaned = route.replace(/^#\//, '').replace(/^#/, '');
+          if (cleaned) navigateTo(cleaned);
+        });
+      });
+    }
+
+    function rebuildPriorityActions() {
+      const card = document.getElementById('priorityActionsCard');
+      if (!card) return;
+
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderPriorityActions(getRecommendations());
+      const next = fresh.firstElementChild;
+
+      if (next) {
+        card.replaceWith(next);
+        bindPriorityActions();
+      } else {
+        card.remove();
+      }
+    }
 
     // ── Return card ──
     document.getElementById('returnCardDismiss')?.addEventListener('click', () => {
@@ -381,8 +449,9 @@ export const TodayView = {
       document.querySelectorAll('[data-qci-group]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const group = btn.dataset.qciGroup;
-          const val   = btn.dataset.value;
+          const val = btn.dataset.value;
           wellnessState[group] = val;
+          viewState.wellness[group] = val;
 
           document.querySelectorAll(`[data-qci-group="${group}"]`).forEach(b => {
             b.classList.toggle('qci-btn--selected', b.dataset.value === val);
@@ -396,10 +465,11 @@ export const TodayView = {
               setTimeout(() => {
                 rebuildQci();
                 rebuildNourishmentCard();
+                rebuildPriorityActions();
               }, 700);
             }
           } catch {
-            showToast('Save failed \u2014 try again', 'error');
+            showToast('Save failed — try again', 'error');
           }
         });
       });
@@ -407,13 +477,21 @@ export const TodayView = {
       document.getElementById('qciEditBtn')?.addEventListener('click', () => {
         const qci = document.getElementById('quickCheckin');
         if (!qci) return;
+        wellnessState.mood = '';
+        wellnessState.energy = '';
+        viewState.wellness.mood = '';
+        viewState.wellness.energy = '';
+
         const fresh = document.createElement('div');
         fresh.innerHTML = renderQuickCheckin('', '');
         qci.replaceWith(fresh.firstElementChild);
         bindQci();
+        rebuildNourishmentCard();
+        rebuildPriorityActions();
       });
     }
 
+    bindPriorityActions();
     bindQci();
   }
 };
