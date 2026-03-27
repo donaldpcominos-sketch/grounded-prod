@@ -4700,3 +4700,37 @@ body {
     rgba(201,165,92,0.9)
   );
 }
+/* ─── Notification preferences UI ───────────────────────────────────────────── */
+
+.notif-detail {
+  overflow: hidden;
+}
+
+.notif-detail--hidden {
+  display: none;
+}
+
+.notif-section-divider {
+  height: 1px;
+  background: var(--color-border-soft);
+}
+
+.notif-section-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+}
+
+.notif-time-pair {
+  display: flex;
+  gap: 16px;
+}
+
+.notif-time-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
