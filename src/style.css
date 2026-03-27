@@ -4819,3 +4819,234 @@ body {
   border-left: 3px solid var(--color-border);
   padding-left: 17px;
 }
+/* ─── Books view ─────────────────────────────────────────────────────────────── */
+
+/* Summary pill row — soft stat chips below the header */
+.books-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.books-summary-item {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-soft);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-ink-3);
+  white-space: nowrap;
+}
+
+/* Add button row */
+.books-add-row {
+  margin-bottom: 28px;
+}
+
+.books-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 13px 20px;
+  border-radius: var(--radius-btn);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  color: var(--color-ink-2);
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.books-add-btn:hover {
+  border-color: var(--color-ink-3);
+  color: var(--color-ink);
+}
+
+.books-add-btn:active {
+  opacity: 0.75;
+}
+
+/* Sections container */
+.books-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+/* Individual section block */
+.books-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Section heading row — title + count on same line */
+.books-section-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.books-section-heading {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+}
+
+.books-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-soft);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-ink-4);
+  line-height: 1;
+}
+
+/* Empty state — calm placeholder */
+.books-empty-state {
+  padding: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border-soft);
+}
+
+.books-empty-state-text {
+  font-size: 13px;
+  color: var(--color-ink-4);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* Card list — stacked with consistent gap */
+.book-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Book card — elevated surface card */
+.book-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  padding: 18px 20px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Card body — title, status badge, author */
+.book-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.book-card-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.book-card-title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--color-ink);
+  line-height: 1.25;
+  flex: 1;
+}
+
+.book-card-author {
+  font-size: 12px;
+  color: var(--color-ink-4);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* Status badge — subtle pill, right-aligned beside title */
+.book-card-status {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-soft);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 2px; /* optical alignment with title cap height */
+}
+
+/* Card actions — flex row of soft pill chips, wraps on mobile */
+.book-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Primary action chip */
+.book-action {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.book-action:hover  { opacity: 0.88; }
+.book-action:active { opacity: 0.72; }
+
+.book-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Secondary / subtle action chip */
+.book-action--subtle {
+  background: var(--color-surface-2);
+  color: var(--color-ink-3);
+  border: 1px solid var(--color-border-soft);
+}
+
+.book-action--subtle:hover {
+  opacity: 1;
+  border-color: var(--color-border);
+  color: var(--color-ink-2);
+}
