@@ -1,6 +1,8 @@
 // src/services/progress.js
 // Aggregates the last 7 days of data across all Firestore collections.
-// Returns a simple summary object — no targets, no percentages.
+// Returns both:
+// 1. legacy compatibility metrics
+// 2. active surfaced-product metrics for cleaner product logic
 
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase.js';
@@ -30,63 +32,135 @@ async function fetchDocs(userId, subcollection, dateKeys) {
   return snaps.map(snap => (snap.exists() ? snap.data() : null));
 }
 
+// ─── Metric helpers ───────────────────────────────────────────────────────────
+
+function hasCompletedWorkout(workout) {
+  return !!(
+    workout &&
+    Array.isArray(workout.completedExercises) &&
+    workout.completedExercises.length > 0
+  );
+}
+
+function hasJournalEntry(journal) {
+  return !!(
+    journal &&
+    typeof journal.entry === 'string' &&
+    journal.entry.trim().length > 0
+  );
+}
+
+function hasCheckIn(checkin) {
+  const mood = checkin?.mood || '';
+  const energy = checkin?.energy || '';
+  return !!(mood || energy);
+}
+
+function hasNourishment(nutrition) {
+  return !!(nutrition && nutrition.nourished === true);
+}
+
+function hasCompletedHabitDay(habitLog) {
+  if (!habitLog || typeof habitLog !== 'object') return false;
+  return Object.values(habitLog).some(value => value === true);
+}
+
 // ─── getWeekSummary ───────────────────────────────────────────────────────────
-// Returns:
-//   workoutsDone    — number of days with a completed workout session
-//   journalDays     — number of days with a journal entry
-//   avgHydration    — average glasses/day across days that have a check-in
-//   moodCounts      — { calm, flat, good, stretched } tallied over the week
-//   nourishedDays   — number of days where nourished: true
-//   hasAnyData      — boolean — false if it's a brand-new week with nothing yet
+// Legacy compatibility:
+//   workoutsDone
+//   journalDays
+//   avgHydration
+//   moodCounts
+//   nourishedDays
+//   hasAnyData
+//
+// New active metrics:
+//   activeWorkoutsDone
+//   activeNourishedDays
+//   activeHabitsDays
+//   activeCheckInDays
+//   activeHasAnyData
+//
+// Transparency flags:
+//   includesDormantJournal
+//   includesLegacyHydration
 
 export async function getWeekSummary(userId) {
   const keys = getLast7Keys();
 
-  const [workouts, journals, checkins, nutrition] = await Promise.all([
+  const [workouts, journals, checkins, nutrition, habits] = await Promise.all([
     fetchDocs(userId, 'workoutSessions', keys),
-    fetchDocs(userId, 'journalEntries',  keys),
+    fetchDocs(userId, 'journalEntries', keys),
     fetchDocs(userId, 'wellnessCheckins', keys),
-    fetchDocs(userId, 'nutritionLogs',   keys),
+    fetchDocs(userId, 'nutritionLogs', keys),
+    fetchDocs(userId, 'habitLogs', keys),
   ]);
 
-  // Workouts — session must have at least one completedExercise
-  const workoutsDone = workouts.filter(w =>
-    w && Array.isArray(w.completedExercises) && w.completedExercises.length > 0
-  ).length;
+  // ─── Legacy / compatibility metrics ────────────────────────────────────────
 
-  // Journal — entry must have non-empty entry text
-  const journalDays = journals.filter(j =>
-    j && j.entry && j.entry.trim().length > 0
-  ).length;
+  const workoutsDone = workouts.filter(hasCompletedWorkout).length;
 
-  // Hydration — average across check-in days that have a value
+  const journalDays = journals.filter(hasJournalEntry).length;
+
   const hydrationValues = checkins
     .filter(c => c && typeof c.hydrationGlasses === 'number')
     .map(c => c.hydrationGlasses);
+
   const avgHydration = hydrationValues.length > 0
     ? Math.round(hydrationValues.reduce((a, b) => a + b, 0) / hydrationValues.length)
     : 0;
 
-  // Mood tallies
   const moodCounts = { calm: 0, flat: 0, good: 0, stretched: 0 };
   checkins.forEach(c => {
-    if (c && c.mood && moodCounts.hasOwnProperty(c.mood)) {
+    if (c && c.mood && Object.prototype.hasOwnProperty.call(moodCounts, c.mood)) {
       moodCounts[c.mood]++;
     }
   });
 
-  // Nourished days
-  const nourishedDays = nutrition.filter(n => n && n.nourished === true).length;
+  const nourishedDays = nutrition.filter(hasNourishment).length;
 
-  // Any data at all?
-  const hasAnyData = workoutsDone > 0 || journalDays > 0 || hydrationValues.length > 0 || nourishedDays > 0;
+  const hasAnyData =
+    workoutsDone > 0 ||
+    journalDays > 0 ||
+    hydrationValues.length > 0 ||
+    nourishedDays > 0;
+
+  // ─── Active surfaced-product metrics ───────────────────────────────────────
+
+  const activeWorkoutsDone = workoutsDone;
+  const activeNourishedDays = nourishedDays;
+  const activeHabitsDays = habits.filter(hasCompletedHabitDay).length;
+  const activeCheckInDays = checkins.filter(hasCheckIn).length;
+
+  const activeHasAnyData =
+    activeWorkoutsDone > 0 ||
+    activeNourishedDays > 0 ||
+    activeHabitsDays > 0 ||
+    activeCheckInDays > 0;
+
+  // ─── Transparency flags ────────────────────────────────────────────────────
+
+  const includesDormantJournal = journalDays > 0;
+  const includesLegacyHydration = hydrationValues.length > 0;
 
   return {
+    // legacy compatibility
     workoutsDone,
     journalDays,
     avgHydration,
     moodCounts,
     nourishedDays,
     hasAnyData,
+
+    // active surfaced-product metrics
+    activeWorkoutsDone,
+    activeNourishedDays,
+    activeHabitsDays,
+    activeCheckInDays,
+    activeHasAnyData,
+
+    // structural transparency
+    includesDormantJournal,
+    includesLegacyHydration,
   };
 }

@@ -1,14 +1,252 @@
 // src/domain/recommendations.js
-// Generates simple, priority-based recommendations from dailyState.
-// Pure logic only — no Firestore calls.
+import { getDayContext } from './dayContext.js';
 
 function pushRecommendation(list, recommendation) {
   list.push({
-    id: recommendation.id || `${recommendation.type}-${list.length + 1}`,
+    id: recommendation.id || `${recommendation.type || 'item'}-${list.length + 1}`,
     priority: typeof recommendation.priority === 'number' ? recommendation.priority : 999,
     actionLabel: recommendation.actionLabel || 'Open',
     route: recommendation.route || null,
+    targetId: recommendation.targetId || null,
     ...recommendation
+  });
+}
+
+function isSurfaced(state, key) {
+  return !!state?.capabilities?.[key]?.surfaced;
+}
+
+function hasNutritionLogged(state) {
+  return !!state?.nutrition?.nourished || !!state?.nutrition?.note;
+}
+
+function hasIncompleteHabits(state) {
+  const completed = state?.habits?.completedCount ?? 0;
+  const total = state?.habits?.totalCount ?? 0;
+  return total > 0 && completed < total;
+}
+
+function hasNicoActivity(state) {
+  const naps = state?.nico?.naps ?? [];
+  const activities = state?.nico?.completedActivities ?? [];
+  return naps.length > 0 || activities.length > 0;
+}
+
+function addCheckInRecommendation(list, state, context) {
+  if (!isSurfaced(state, 'wellness')) return;
+  if (!context.needsCheckIn) return;
+
+  let title = 'Check in';
+  let message = 'Start with a quick check-in so the rest of the day feels clearer.';
+
+  if (context.gapBand === 'long') {
+    title = 'Start gently';
+    message = 'Ease back in with a quick check-in and keep today simple.';
+  } else if (context.gapBand === 'short') {
+    title = 'Start gently';
+    message = 'A quick check-in is a gentle way to reset today.';
+  }
+
+  pushRecommendation(list, {
+    id: 'check-in',
+    type: 'wellness',
+    title,
+    message,
+    actionLabel: 'Open check-in',
+    targetId: 'quickCheckin',
+    priority: 1
+  });
+}
+
+function addWorkoutRecommendation(list, state, context) {
+  if (!isSurfaced(state, 'workout')) return;
+
+  const workout = state?.workout;
+  if (!workout || workout.status === 'complete') return;
+
+  let title = 'Make space to move';
+  let message = 'A little movement could feel good today.';
+  let priority = 50;
+
+  if (context.needsCheckIn) {
+    title = 'Move later';
+    message = 'Check in first, then come back to movement if it still feels right.';
+    priority = 80;
+  } else if (context.energyBand === 'high') {
+    title = 'Make space to move';
+    message = 'There is good energy here today — this could be a nice time to move.';
+    priority = 12;
+  } else if (context.energyBand === 'low') {
+    title = 'Move lightly';
+    message = 'Keep it gentle — even a short session is enough.';
+    priority = 60;
+  } else if (context.gapBand !== 'none') {
+    title = 'Start small';
+    message = 'A short, easy session is a good way to ease back in.';
+    priority = 36;
+  } else if (context.momentumBand === 'strong') {
+    title = 'Keep it going';
+    message = 'You have built a good rhythm this week — a bit of movement helps protect it.';
+    priority = 24;
+  } else if (context.momentumBand === 'light') {
+    title = 'Make space to move';
+    message = 'A little movement today could help shift the tone of the week.';
+    priority = 34;
+  }
+
+  pushRecommendation(list, {
+    id: 'workout',
+    type: 'workout',
+    title,
+    message,
+    actionLabel: 'Open workout',
+    route: '#/workouts',
+    priority
+  });
+}
+
+function addNutritionRecommendation(list, state, context) {
+  if (!isSurfaced(state, 'nutrition')) return;
+  if (hasNutritionLogged(state)) return;
+
+  let title = 'Eat something simple';
+  let message = 'A nourishing meal or snack could help steady the day.';
+  let priority = 45;
+
+  if (context.needsCheckIn) {
+    priority = 70;
+  } else if (context.energyBand === 'low') {
+    title = 'Eat something simple';
+    message = 'Low energy days are a good time to keep food easy and nourishing.';
+    priority = 14;
+  } else if (context.gapBand !== 'none') {
+    title = 'Nourish first';
+    message = 'A simple meal or snack is an easy reset point for today.';
+    priority = 18;
+  } else if (context.momentumBand === 'light') {
+    title = 'Nourish yourself';
+    message = 'A simple nourishing choice today is a good way to build a little momentum.';
+    priority = 28;
+  }
+
+  pushRecommendation(list, {
+    id: 'nutrition',
+    type: 'nutrition',
+    title,
+    message,
+    actionLabel: 'See ideas',
+    targetId: 'nourishmentCard',
+    priority
+  });
+}
+
+function addHabitsRecommendation(list, state, context) {
+  if (!isSurfaced(state, 'habits')) return;
+  if (!hasIncompleteHabits(state)) return;
+
+  const completed = state?.habits?.completedCount ?? 0;
+  const total = state?.habits?.totalCount ?? 0;
+  const remaining = Math.max(total - completed, 0);
+
+  let title = 'Start small';
+  let message = 'Pick one easy habit and let that be enough for now.';
+  let priority = 55;
+
+  if (context.needsCheckIn) {
+    priority = 75;
+  } else if (context.energyBand === 'low') {
+    title = 'Start small';
+    message = 'Keep it light — one or two easy habits is plenty today.';
+    priority = 20;
+  } else if (context.momentumBand === 'strong') {
+    title = 'Protect the rhythm';
+    message = 'You already have good momentum — a couple of small habits can help keep it steady.';
+    priority = 22;
+  } else if (remaining <= 3) {
+    title = 'Keep it going';
+    message = 'You are already partway there — a few small wins will round things out nicely.';
+    priority = 26;
+  } else if (context.momentumBand === 'light') {
+    title = 'Start small';
+    message = 'One or two simple habits could help shift the feel of the day.';
+    priority = 32;
+  }
+
+  pushRecommendation(list, {
+    id: 'habits',
+    type: 'habits',
+    title,
+    message,
+    actionLabel: 'Open habits',
+    route: '#/habits',
+    priority
+  });
+}
+
+function addNicoRecommendation(list, state, context) {
+  if (!isSurfaced(state, 'nico')) return;
+  if (hasNicoActivity(state)) return;
+
+  let title = 'Capture a moment';
+  let message = 'Add a small Nico moment from today while it is fresh.';
+  let priority = 65;
+
+  if (context.needsCheckIn) {
+    priority = 85;
+  } else if (context.momentumBand === 'strong') {
+    title = 'Capture a moment';
+    message = 'You are in a nice rhythm — it could be a good day to save a small Nico moment too.';
+    priority = 38;
+  } else if (context.gapBand === 'long') {
+    title = 'Capture a moment';
+    message = 'A small Nico memory is an easy way to gently reconnect with the day.';
+    priority = 42;
+  }
+
+  pushRecommendation(list, {
+    id: 'nico',
+    type: 'nico',
+    title,
+    message,
+    actionLabel: 'Open Nico',
+    route: '#/nico',
+    priority
+  });
+}
+
+function addProgressRecommendation(list, state, context) {
+  const hasActiveProgress =
+    state?.progress?.activeHasAnyData ??
+    state?.progress?.hasAnyData ??
+    false;
+
+  if (!hasActiveProgress) return;
+  if (context.needsCheckIn) return;
+
+  let title = 'Protect the rhythm';
+  let message = 'A couple of small actions today will help keep the week feeling steady.';
+  let priority = 90;
+
+  if (context.momentumBand === 'strong') {
+    title = 'Protect the rhythm';
+    message = 'You have already built good momentum — today is more about protecting it than doing everything.';
+    priority = 30;
+  } else if (context.momentumBand === 'light') {
+    title = 'Build a little momentum';
+    message = 'One or two small actions today could help shift the feel of the week.';
+    priority = 52;
+  } else {
+    return;
+  }
+
+  pushRecommendation(list, {
+    id: 'progress',
+    type: 'progress',
+    title,
+    message,
+    actionLabel: 'View today',
+    targetId: 'todaySummary',
+    priority
   });
 }
 
@@ -17,212 +255,17 @@ export function getTodayRecommendations(state) {
     return [];
   }
 
+  const context = getDayContext(state);
   const recommendations = [];
 
-  addReturnRecommendation(recommendations, state);
-  addWellnessRecommendation(recommendations, state);
-  addWorkoutRecommendation(recommendations, state);
-  addNutritionRecommendation(recommendations, state);
-  addHabitsRecommendation(recommendations, state);
-  addNicoRecommendation(recommendations, state);
-  addJournalRecommendation(recommendations, state);
-  addProgressRecommendation(recommendations, state);
+  addCheckInRecommendation(recommendations, state, context);
+  addWorkoutRecommendation(recommendations, state, context);
+  addNutritionRecommendation(recommendations, state, context);
+  addHabitsRecommendation(recommendations, state, context);
+  addNicoRecommendation(recommendations, state, context);
+  addProgressRecommendation(recommendations, state, context);
 
   return recommendations
     .sort((a, b) => a.priority - b.priority)
     .slice(0, 3);
-}
-
-function addReturnRecommendation(list, state) {
-  const gapHours = state.lastSeen?.gapHours ?? 0;
-
-  if (gapHours >= 72) {
-    pushRecommendation(list, {
-      id: 'return-long-gap',
-      type: 'return',
-      priority: 1,
-      title: 'Welcome back',
-      message: 'You have been away a few days. Start with a quick check-in and one small win today.',
-      actionLabel: 'Check in',
-      route: '#/today'
-    });
-  } else if (gapHours >= 24) {
-    pushRecommendation(list, {
-      id: 'return-day-gap',
-      type: 'return',
-      priority: 2,
-      title: 'Reset gently today',
-      message: 'You have been away since yesterday. A quick check-in is the best place to restart.',
-      actionLabel: 'Check in',
-      route: '#/today'
-    });
-  }
-}
-
-function addWellnessRecommendation(list, state) {
-  const mood = state.wellness?.mood ?? '';
-  const energy = state.wellness?.energy ?? '';
-  const hydrationGlasses = state.wellness?.hydrationGlasses ?? 0;
-
-  if (!mood || !energy) {
-    pushRecommendation(list, {
-      id: 'wellness-checkin',
-      type: 'wellness',
-      priority: 3,
-      title: 'Log how you feel',
-      message: 'A quick mood and energy check-in helps personalise the rest of your day.',
-      actionLabel: 'Check in',
-      route: '#/today'
-    });
-    return;
-  }
-
-  if (hydrationGlasses < 2) {
-    pushRecommendation(list, {
-      id: 'hydration-boost',
-      type: 'hydration',
-      priority: energy === 'low' ? 4 : 6,
-      title: 'Start with hydration',
-      message: 'You have not logged much hydration yet today. A glass of water is an easy early win.',
-      actionLabel: 'Log hydration',
-      route: '#/today'
-    });
-  }
-}
-
-function addWorkoutRecommendation(list, state) {
-  const workout = state.workout;
-  const energy = state.wellness?.energy ?? '';
-
-  if (!workout) {
-    pushRecommendation(list, {
-      id: 'workout-plan',
-      type: 'workout',
-      priority: energy === 'low' ? 7 : 4,
-      title: energy === 'low' ? 'Keep movement light' : 'Make space to move',
-      message: energy === 'low'
-        ? 'A short walk or lighter session could be a better fit for today.'
-        : 'You have not logged a workout yet. This could be a good day to move your body.',
-      actionLabel: 'Open workout',
-      route: '#/workout'
-    });
-    return;
-  }
-
-  if (workout.status !== 'complete') {
-    pushRecommendation(list, {
-      id: 'workout-incomplete',
-      type: 'workout',
-      priority: energy === 'low' ? 7 : 5,
-      title: energy === 'low' ? 'Take the easier option' : 'Finish today’s movement',
-      message: energy === 'low'
-        ? 'Your workout is not complete yet. Give yourself permission to choose a lighter version.'
-        : 'Your workout is still waiting. Even a shorter session keeps momentum going.',
-      actionLabel: 'Resume workout',
-      route: '#/workout'
-    });
-  }
-}
-
-function addNutritionRecommendation(list, state) {
-  const nourished = state.nutrition?.nourished ?? false;
-  const energy = state.wellness?.energy ?? '';
-
-  if (!nourished) {
-    pushRecommendation(list, {
-      id: 'nutrition-log',
-      type: 'nutrition',
-      priority: energy === 'low' ? 4 : 6,
-      title: 'Plan something nourishing',
-      message: energy === 'low'
-        ? 'Low-energy days are easier when food is simple and supportive.'
-        : 'You have not logged nourishment yet today.',
-      actionLabel: 'Open nutrition',
-      route: '#/nutrition'
-    });
-  }
-}
-
-function addHabitsRecommendation(list, state) {
-  const completedCount = state.habits?.completedCount ?? 0;
-  const totalCount = state.habits?.totalCount ?? 0;
-
-  if (totalCount > 0 && completedCount === 0) {
-    pushRecommendation(list, {
-      id: 'habits-start',
-      type: 'habits',
-      priority: 6,
-      title: 'Start your habits gently',
-      message: 'You have not ticked off any habits yet today. Start with the easiest one.',
-      actionLabel: 'Open habits',
-      route: '#/today'
-    });
-  } else if (totalCount > 0 && completedCount < totalCount) {
-    pushRecommendation(list, {
-      id: 'habits-progress',
-      type: 'habits',
-      priority: 8,
-      title: 'Keep your momentum going',
-      message: `You have completed ${completedCount} of ${totalCount} habits so far today.`,
-      actionLabel: 'View habits',
-      route: '#/today'
-    });
-  }
-}
-
-function addNicoRecommendation(list, state) {
-  const naps = Array.isArray(state.nico?.naps) ? state.nico.naps : [];
-  const activities = Array.isArray(state.nico?.completedActivities)
-    ? state.nico.completedActivities
-    : [];
-
-  if (naps.length === 0 && activities.length === 0) {
-    pushRecommendation(list, {
-      id: 'nico-log',
-      type: 'nico',
-      priority: 7,
-      title: 'Capture one Nico moment',
-      message: 'No naps or activities have been logged yet today.',
-      actionLabel: 'Open Nico',
-      route: '#/nico'
-    });
-  }
-}
-
-function addJournalRecommendation(list, state) {
-  const entry = state.journal?.entry ?? '';
-
-  if (!entry.trim()) {
-    pushRecommendation(list, {
-      id: 'journal-reflection',
-      type: 'journal',
-      priority: 9,
-      title: 'Take a quiet moment',
-      message: 'A short journal note can help you mark the day, even if it is just a few lines.',
-      actionLabel: 'Open journal',
-      route: '#/journal'
-    });
-  }
-}
-
-function addProgressRecommendation(list, state) {
-  const hasAnyData = state.progress?.hasAnyData ?? false;
-  const workoutsDone = state.progress?.workoutsDone ?? 0;
-  const journalDays = state.progress?.journalDays ?? 0;
-
-  if (!hasAnyData) {
-    return;
-  }
-
-  if (workoutsDone >= 3 && journalDays >= 3) {
-    pushRecommendation(list, {
-      id: 'progress-strong-week',
-      type: 'progress',
-      priority: 10,
-      title: 'You are building a rhythm',
-      message: 'This week already has good momentum. Protect the basics and keep it steady.',
-      actionLabel: 'View progress',
-      route: '#/progress'
-    });
-  }
 }

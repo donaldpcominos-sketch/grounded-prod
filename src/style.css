@@ -4187,3 +4187,317 @@ body {
   font-size: 11px;
   line-height: 1;
 }
+/* ─── Today: Priority actions ─────────────────────────────────────────────── */
+
+#priorityActionsCard {
+  margin-bottom: 12px;
+}
+
+.priority-action {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 18px;
+  padding: 14px 16px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.12s ease,
+    box-shadow 0.15s ease;
+}
+
+.priority-action + .priority-action {
+  margin-top: 10px;
+}
+
+.priority-action:hover {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.priority-action:active {
+  transform: scale(0.985);
+}
+
+.priority-action-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.priority-action-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-ink);
+  line-height: 1.35;
+}
+
+.priority-action-text {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--color-ink-3);
+  line-height: 1.55;
+}
+
+.priority-action-cta {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+}
+
+/* Subtle hierarchy for first recommendation */
+.priority-action:first-child {
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.35) 0%,
+    rgba(255,255,255,0) 100%
+  ),
+  var(--color-surface-2);
+  border-color: var(--color-border);
+}
+
+/* Mobile polish */
+@media (max-width: 420px) {
+  .priority-action {
+    padding: 13px 14px;
+    gap: 12px;
+  }
+
+  .priority-action-title {
+    font-size: 13px;
+  }
+
+  .priority-action-text {
+    font-size: 12px;
+  }
+
+  .priority-action-cta {
+    font-size: 10px;
+  }
+}
+/* ─── Today summary ───────────────────────────────────────────────────────── */
+
+.today-summary {
+  margin: 12px 0 8px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--color-ink-2);
+  max-width: 92%;
+}
+
+/* ─── Today scroll ease───────────────────────────────────────────────────────── */
+.today-target-pulse {
+  animation: todayTargetPulse 1.2s ease;
+}
+
+@keyframes todayTargetPulse {
+  0% { transform: scale(1); }
+  20% { transform: scale(1.01); }
+  50% { transform: scale(1.015); }
+  100% { transform: scale(1); }
+}
+/* ─── Habits: Edit mode ──────────────────────────────────────── */
+
+.habits-edit-toggle-btn {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-ink-2);
+  cursor: pointer;
+}
+.habits-edit-toggle-btn--active {
+  background: var(--color-ink);
+  color: var(--color-bg);
+  border-color: var(--color-ink);
+}
+
+.habits-edit-section {
+  margin-bottom: 24px;
+}
+
+.habits-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.habits-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--color-border-soft);
+  transition: opacity 0.2s;
+}
+
+.habits-edit-emoji {
+  font-size: 20px;
+  width: 28px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.habits-edit-label {
+  flex: 1;
+  font-size: 15px;
+  color: var(--color-ink);
+}
+
+/* Toggle switch */
+.habits-toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 26px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.habits-toggle-input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.habits-toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--color-border);
+  transition: background 0.2s;
+}
+.habits-toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s;
+}
+.habits-toggle-input:checked + .habits-toggle-track {
+  background: var(--color-ink-2);
+}
+.habits-toggle-input:checked + .habits-toggle-track::after {
+  transform: translateX(18px);
+}
+
+/* Add form */
+.habits-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.habits-add-emoji-input {
+  width: 52px;
+  text-align: center;
+  font-size: 20px;
+  padding: 8px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.habits-add-label-input {
+  flex: 1;
+  font-size: 15px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.habits-add-btn {
+  padding: 8px 14px;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.habits-add-error {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--color-error, #c0392b);
+}
+/* ─── Habits: UX polish additions ────────────────────────────────────────────── */
+
+/* Fix Done button — use ink, not ink-1 (undefined var) */
+.habits-edit-toggle-btn--active {
+  background: var(--color-ink);
+  color: var(--color-surface);
+  border-color: var(--color-ink);
+}
+
+/* Empty state — shown when no active habits */
+.habits-empty-state {
+  padding: 48px 0 32px;
+  text-align: center;
+}
+
+.habits-empty-icon {
+  font-size: 36px;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+
+.habits-empty-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  margin-bottom: 6px;
+}
+
+.habits-empty-body {
+  font-size: 14px;
+  color: var(--color-ink-4);
+  line-height: 1.5;
+}
+
+/* Edit mode: contextual hint below heading */
+.habits-edit-hint {
+  margin-bottom: 14px;
+}
+
+.habits-edit-hint-text {
+  font-size: 13px;
+  color: var(--color-ink-4);
+  line-height: 1.5;
+}
+
+/* Edit mode: inactive group label */
+.habits-edit-group-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+  padding: 16px 0 4px;
+}
+
+/* Edit mode: inactive rows — visually dimmed */
+.habits-edit-row--inactive {
+  opacity: 0.5;
+}
+
+/* Inputs: tighter focus ring to match app feel */
+.habits-add-emoji-input:focus,
+.habits-add-label-input:focus {
+  outline: none;
+  border-color: var(--color-ink-3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-ink) 8%, transparent);
+}

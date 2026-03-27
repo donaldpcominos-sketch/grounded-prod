@@ -1,20 +1,20 @@
 // src/domain/dailyState.js
 // Aggregates the app state needed for the Today screen.
-// This file does NOT write to Firestore and does NOT change existing service behaviour.
+// Adds capability awareness for surfaced vs dormant features.
 
 import { getTodayWellnessCheckin } from '../services/wellness.js';
 import { getTodayWorkoutSession } from '../services/workouts.js';
 import { getTodayNutritionLog } from '../services/nutrition.js';
 import { getTodayJournalEntry } from '../services/journal.js';
 import { getTodayNicoLog } from '../services/nico.js';
-import { getHabitLog, HABITS } from '../services/habits.js';
+import { getHabitLog, getHabits, HABITS } from '../services/habits.js';
 import { getWeekSummary } from '../services/progress.js';
 import { getLastActiveGap } from '../services/lastSeen.js';
 import { getTodayKey } from '../utils.js';
 
 function normaliseWellness(data) {
   return {
-    hydrationGlasses: data?.hydrationGlasses ?? 0,
+    hydrationGlasses: data?.hydrationGlasses ?? 0, // legacy, not used for active logic
     mood: data?.mood ?? '',
     energy: data?.energy ?? ''
   };
@@ -53,10 +53,12 @@ function normaliseNico(data) {
   };
 }
 
-function normaliseHabits(habitMap) {
+// habitDefinitions: the resolved list of habit definitions (Firestore or fallback)
+// habitMap: the user's completion log for today { [habitId]: boolean }
+function normaliseHabits(habitMap, habitDefinitions) {
   const habitsById = habitMap && typeof habitMap === 'object' ? habitMap : {};
 
-  const items = HABITS.map(habit => ({
+  const items = habitDefinitions.map(habit => ({
     ...habit,
     completed: habitsById[habit.id] === true
   }));
@@ -66,18 +68,37 @@ function normaliseHabits(habitMap) {
   return {
     items,
     completedCount,
-    totalCount: HABITS.length
+    totalCount: habitDefinitions.length
   };
 }
 
 function normaliseProgress(data) {
   return {
+    // legacy / compatibility
     workoutsDone: data?.workoutsDone ?? 0,
     journalDays: data?.journalDays ?? 0,
     avgHydration: data?.avgHydration ?? 0,
-    moodCounts: data?.moodCounts ?? { calm: 0, flat: 0, good: 0, stretched: 0 },
     nourishedDays: data?.nourishedDays ?? 0,
-    hasAnyData: data?.hasAnyData ?? false
+    moodCounts: data?.moodCounts ?? { calm: 0, flat: 0, good: 0, stretched: 0 },
+    hasAnyData: data?.hasAnyData ?? false,
+
+    // NEW: active/surfaced-only progress
+    activeWorkoutsDone: data?.activeWorkoutsDone ?? data?.workoutsDone ?? 0,
+    activeNourishedDays: data?.activeNourishedDays ?? data?.nourishedDays ?? 0,
+    activeHabitsDays: data?.activeHabitsDays ?? 0,
+    activeCheckInDays: data?.activeCheckInDays ?? 0,
+    activeHasAnyData:
+      data?.activeHasAnyData ??
+      !!(
+        (data?.activeWorkoutsDone ?? 0) > 0 ||
+        (data?.activeNourishedDays ?? 0) > 0 ||
+        (data?.activeHabitsDays ?? 0) > 0 ||
+        (data?.activeCheckInDays ?? 0) > 0
+      ),
+
+    // transparency flags
+    includesDormantJournal: data?.includesDormantJournal ?? true,
+    includesLegacyHydration: data?.includesLegacyHydration ?? true
   };
 }
 
@@ -86,6 +107,31 @@ function normaliseLastSeen(data) {
     lastActiveAt: data?.lastActiveAt ?? null,
     gapHours: typeof data?.gapHours === 'number' ? data.gapHours : 0
   };
+}
+
+function buildCapabilities() {
+  return {
+    wellness: { available: true, surfaced: true },
+    workout: { available: true, surfaced: true },
+    nutrition: { available: true, surfaced: true },
+    habits: { available: true, surfaced: true },
+    nico: { available: true, surfaced: true },
+    journal: { available: true, surfaced: false },
+    shopping: { available: true, surfaced: false },
+    notifications: { available: true, surfaced: false }
+  };
+}
+
+// ─── Resolve habit definitions ────────────────────────────────────────────────
+// Prefer Firestore habits if the user has any active ones defined.
+// Fall back to the hardcoded HABITS array transparently.
+
+async function resolveHabitDefinitions(userId) {
+  const firestoreHabits = await getHabits(userId);
+  if (firestoreHabits.length > 0) {
+    return firestoreHabits;
+  }
+  return HABITS;
 }
 
 export async function getDailyState(userId) {
@@ -101,6 +147,7 @@ export async function getDailyState(userId) {
     nutritionResult,
     journalResult,
     nicoResult,
+    habitDefinitions,
     habitsResult,
     progressResult,
     lastSeenResult
@@ -110,6 +157,7 @@ export async function getDailyState(userId) {
     getTodayNutritionLog(userId),
     getTodayJournalEntry(userId),
     getTodayNicoLog(userId),
+    resolveHabitDefinitions(userId),
     getHabitLog(userId, todayKey),
     getWeekSummary(userId),
     getLastActiveGap(userId)
@@ -122,8 +170,9 @@ export async function getDailyState(userId) {
     nutrition: normaliseNutrition(nutritionResult),
     journal: normaliseJournal(journalResult),
     nico: normaliseNico(nicoResult),
-    habits: normaliseHabits(habitsResult),
+    habits: normaliseHabits(habitsResult, habitDefinitions),
     progress: normaliseProgress(progressResult),
-    lastSeen: normaliseLastSeen(lastSeenResult)
+    lastSeen: normaliseLastSeen(lastSeenResult),
+    capabilities: buildCapabilities()
   };
 }

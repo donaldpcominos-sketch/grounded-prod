@@ -8,6 +8,8 @@ import { HABITS } from '../services/habits.js';
 import { navigateTo } from '../router.js';
 import { getDailyState } from '../domain/dailyState.js';
 import { getTodayRecommendations } from '../domain/recommendations.js';
+import { getTodaySummary } from '../domain/summary.js';
+import { getDayContext } from '../domain/dayContext.js';
 
 // ─── Weather card ─────────────────────────────────────────────────────────────
 
@@ -137,26 +139,96 @@ function renderQuickCheckin(mood, energy) {
 
 // ─── Priority actions ─────────────────────────────────────────────────────────
 
-function renderPriorityActions(recommendations) {
+function getPriorityActionsMeta(state) {
+  const context = getDayContext(state);
+
+  switch (context.tone) {
+    case 'welcome-back':
+      return {
+        title: 'Start gently',
+        subtitle: 'A few small suggestions to help you ease back in.'
+      };
+
+    case 'gentle-reset':
+      return {
+        title: 'Gentle reset',
+        subtitle: 'A few simple suggestions to help steady the day.'
+      };
+
+    case 'check-in-first':
+      return {
+        title: 'Start here',
+        subtitle: 'A quick check-in will help shape the rest of the day.'
+      };
+
+    case 'protect-momentum':
+      return {
+        title: 'Keep it steady',
+        subtitle: 'You already have momentum this week — keep today realistic.'
+      };
+
+    case 'build-momentum':
+      return {
+        title: 'Keep the rhythm going',
+        subtitle: 'A few well-placed actions could carry your momentum forward.'
+      };
+
+    case 'start-small':
+      return {
+        title: 'Start small',
+        subtitle: 'One or two simple actions are enough to shift the day.'
+      };
+
+    case 'reset-week':
+      return {
+        title: 'Small reset',
+        subtitle: 'A couple of grounded actions could help reset the tone of the week.'
+      };
+
+    case 'low-energy':
+      return {
+        title: 'Keep it light',
+        subtitle: 'Focus on the essentials and let that be enough for today.'
+      };
+
+    case 'high-energy-move':
+      return {
+        title: 'Use the energy well',
+        subtitle: 'A few intentional actions could make today feel really good.'
+      };
+
+    case 'steady-day':
+    default:
+      return {
+        title: 'Priority actions',
+        subtitle: 'A few gentle suggestions for today.'
+      };
+  }
+}
+
+function renderPriorityActions(recommendations, state) {
   if (!Array.isArray(recommendations) || recommendations.length === 0) return '';
+
+  const meta = getPriorityActionsMeta(state);
 
   return `
     <section class="card" id="priorityActionsCard">
       <div class="card-row">
         <div>
-          <p class="card-label">Priority actions</p>
-          <p class="card-body mt-1">A few gentle suggestions for today.</p>
+          <p class="card-label">${meta.title}</p>
+          <p class="card-body mt-1">${meta.subtitle}</p>
         </div>
       </div>
 
       <div class="mt-4">
         ${recommendations.map(rec => `
           <button
-            type="button"
-            class="priority-action"
-            data-rec-route="${rec.route || ''}"
-            aria-label="${rec.title}"
-          >
+  type="button"
+  class="priority-action"
+  data-rec-route="${rec.route || ''}"
+  data-rec-target="${rec.targetId || ''}"
+  aria-label="${rec.title}"
+>
             <div class="priority-action-copy">
               <p class="priority-action-title">${rec.title}</p>
               <p class="priority-action-text">${rec.message}</p>
@@ -212,10 +284,12 @@ function getTypeColor(type) {
   return { lower: 'tag--warm', upper: 'tag--cool', full: 'tag--neutral', 'cardio-core': 'tag--green', recovery: 'tag--soft' }[type] || 'tag--neutral';
 }
 
-function renderWorkoutTile(savedSession) {
+function renderWorkoutTile(savedSession, state) {
   const today = new Date().getDay();
   const split = WEEKLY_SPLIT[today];
   if (!split) return '';
+
+  const context = getDayContext(state);
 
   const isDone = savedSession?.status === 'complete';
   const isAlternate = savedSession?.type === 'alternate';
@@ -227,12 +301,14 @@ function renderWorkoutTile(savedSession) {
     statusLine = '<span class="workout-tile-done">✓ Done today</span>';
   }
 
+  const focusText = getWorkoutTileFocus(split, context, isDone);
+
   return `
     <button class="workout-tile" id="workoutTileBtn" aria-label="Go to workouts">
       <div class="workout-tile-left">
         <p class="workout-tile-eyebrow">Today&#39;s workout</p>
         <p class="workout-tile-label">${split.label}</p>
-        <p class="workout-tile-focus">${split.focus}</p>
+        <p class="workout-tile-focus">${focusText}</p>
       </div>
       <div class="workout-tile-right">
         <span class="tag ${getTypeColor(split.type)}">${getTypeTag(split.type)}</span>
@@ -241,6 +317,44 @@ function renderWorkoutTile(savedSession) {
       </div>
     </button>
   `;
+}
+
+function getWorkoutTileFocus(split, context, isDone) {
+  if (isDone) {
+    if (context.energyBand === 'low') return 'Nicely done — keep the rest of the day light';
+    if (context.momentumBand === 'strong') return 'Another steady step in a strong week';
+    return 'Movement done for today';
+  }
+
+  if (context.tone === 'welcome-back') {
+    return 'Ease back in gently today';
+  }
+
+  if (context.tone === 'gentle-reset') {
+    return 'A little movement could help reset the day';
+  }
+
+  if (context.energyBand === 'low') {
+    return 'Keep it light today';
+  }
+
+  if (context.tone === 'protect-momentum') {
+    return 'Momentum is already there — keep today realistic';
+  }
+
+  if (context.tone === 'build-momentum') {
+    return 'A good chance to keep your rhythm going';
+  }
+
+  if (context.tone === 'reset-week') {
+    return 'A small session could shift the tone of the week';
+  }
+
+  if (context.energyBand === 'high') {
+    return 'Good day to lean into your energy';
+  }
+
+  return split.focus;
 }
 
 // ─── Habits entry tile ────────────────────────────────────────────────────────
@@ -315,24 +429,28 @@ function renderView(user, state, returnMsg, weather, recommendations) {
     <main class="view-scroll">
       <div class="view-inner">
 
-        <header class="page-header">
-          <p class="eyebrow">Grounded</p>
-          <div class="header-row">
-            <div>
-              <h1 class="page-title">Welcome, ${firstName}</h1>
-              <p class="page-subtitle">${getTodayDisplay()}</p>
-            </div>
-            ${user.photoURL ? `<img src="${user.photoURL}" alt="${user.displayName || 'Profile'}" class="avatar" />` : ''}
-          </div>
-        </header>
+<header class="page-header">
+  <p class="eyebrow">Grounded</p>
+  <div class="header-row">
+    <div>
+      <h1 class="page-title">Welcome, ${firstName}</h1>
+      <p class="page-subtitle">${getTodayDisplay()}</p>
+    </div>
+    ${user.photoURL ? `<img src="${user.photoURL}" alt="${user.displayName || 'Profile'}" class="avatar" />` : ''}
+  </div>
+</header>
+
+<p class="today-summary" id="todaySummary">
+  ${getTodaySummary(state)}
+</p>
 
         ${renderReturnCard(returnMsg)}
-        ${renderPriorityActions(recommendations)}
+        ${renderPriorityActions(recommendations, state)}
         ${renderWeatherCard(weather)}
         ${renderQuickCheckin(state.wellness.mood || '', state.wellness.energy || '')}
 
         <div class="card-stack">
-          ${renderWorkoutTile(state.workout)}
+          ${renderWorkoutTile(state.workout, state)}
           ${renderHabitsTile(state.habits)}
           ${renderNourishmentCard(state.wellness.energy || '')}
         </div>
@@ -372,15 +490,38 @@ export const TodayView = {
 
     const wellnessState = viewState.wellness;
 
-    function bindPriorityActions() {
-      document.querySelectorAll('[data-rec-route]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const route = btn.dataset.recRoute;
-          if (!route) return;
+function bindPriorityActions() {
+  document.querySelectorAll('.priority-action').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.recRoute;
+      const targetId = btn.dataset.recTarget;
 
-          const cleaned = route.replace(/^#\//, '').replace(/^#/, '');
-          if (cleaned) navigateTo(cleaned);
-        });
+      if (targetId) {
+        const target = document.getElementById(targetId);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+          target.classList.add('today-target-pulse');
+          setTimeout(() => target.classList.remove('today-target-pulse'), 1200);
+        }
+        return;
+      }
+
+      if (route) {
+        const cleaned = route.replace(/^#\//, '').replace(/^#/, '');
+        if (cleaned) navigateTo(cleaned);
+      }
+    });
+  });
+}
+
+    function bindStaticTiles() {
+      document.getElementById('workoutTileBtn')?.addEventListener('click', () => {
+        navigateTo('workouts');
+      });
+
+      document.getElementById('habitsTileBtn')?.addEventListener('click', () => {
+        navigateTo('habits');
       });
     }
 
@@ -389,7 +530,7 @@ export const TodayView = {
       if (!card) return;
 
       const fresh = document.createElement('div');
-      fresh.innerHTML = renderPriorityActions(getRecommendations());
+      fresh.innerHTML = renderPriorityActions(getRecommendations(), viewState);
       const next = fresh.firstElementChild;
 
       if (next) {
@@ -400,47 +541,65 @@ export const TodayView = {
       }
     }
 
-    // ── Return card ──
-    document.getElementById('returnCardDismiss')?.addEventListener('click', () => {
-      _returnDismissed = true;
-      const card = document.getElementById('returnCard');
-      if (card) {
-        card.classList.add('return-card--dismissing');
-        setTimeout(() => card.remove(), 350);
-      }
-    });
-
-    // ── Workout tile ──
-    document.getElementById('workoutTileBtn')?.addEventListener('click', () => {
-      navigateTo('workouts');
-    });
-
-    // ── Habits tile ──
-    document.getElementById('habitsTileBtn')?.addEventListener('click', () => {
-      navigateTo('habits');
-    });
-
-    // ── Quick check-in ──
     function rebuildQci() {
       const qci = document.getElementById('quickCheckin');
       if (!qci) return;
+
       const fresh = document.createElement('div');
       fresh.innerHTML = renderQuickCheckin(wellnessState.mood, wellnessState.energy);
       qci.replaceWith(fresh.firstElementChild);
       bindQci();
     }
 
+    function rebuildWorkoutTile() {
+      const tile = document.getElementById('workoutTileBtn');
+      if (!tile) return;
+
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderWorkoutTile(viewState.workout, viewState);
+      const next = fresh.firstElementChild;
+
+      if (next) {
+        tile.replaceWith(next);
+        bindStaticTiles();
+      }
+    }
+
     function rebuildNourishmentCard() {
       const card = document.getElementById('nourishmentCard');
       if (!card) return;
+
       const fresh = document.createElement('div');
       fresh.innerHTML = renderNourishmentCard(wellnessState.energy);
       card.replaceWith(fresh.firstElementChild);
     }
 
+    function rebuildSummary() {
+      const summary = document.getElementById('todaySummary');
+      if (!summary) return;
+      summary.textContent = getTodaySummary(viewState);
+    }
+
+    function refreshTodayUI(options = {}) {
+      const {
+        qci = true,
+        summary = true,
+        priorityActions = true,
+        nourishment = true,
+        workout = true
+      } = options;
+
+      if (qci) rebuildQci();
+      if (summary) rebuildSummary();
+      if (priorityActions) rebuildPriorityActions();
+      if (nourishment) rebuildNourishmentCard();
+      if (workout) rebuildWorkoutTile();
+    }
+
     function showQciTick() {
       const qci = document.getElementById('quickCheckin');
       if (!qci) return;
+
       qci.classList.add('qci-card--saved');
       setTimeout(() => qci.classList.remove('qci-card--saved'), 900);
     }
@@ -450,6 +609,7 @@ export const TodayView = {
         btn.addEventListener('click', async () => {
           const group = btn.dataset.qciGroup;
           const val = btn.dataset.value;
+
           wellnessState[group] = val;
           viewState.wellness[group] = val;
 
@@ -460,12 +620,11 @@ export const TodayView = {
 
           try {
             await saveTodayWellnessCheckin(user.uid, wellnessState);
+
             if (wellnessState.mood && wellnessState.energy) {
               showQciTick();
               setTimeout(() => {
-                rebuildQci();
-                rebuildNourishmentCard();
-                rebuildPriorityActions();
+                refreshTodayUI();
               }, 700);
             }
           } catch {
@@ -477,6 +636,7 @@ export const TodayView = {
       document.getElementById('qciEditBtn')?.addEventListener('click', () => {
         const qci = document.getElementById('quickCheckin');
         if (!qci) return;
+
         wellnessState.mood = '';
         wellnessState.energy = '';
         viewState.wellness.mood = '';
@@ -485,13 +645,29 @@ export const TodayView = {
         const fresh = document.createElement('div');
         fresh.innerHTML = renderQuickCheckin('', '');
         qci.replaceWith(fresh.firstElementChild);
+
         bindQci();
-        rebuildNourishmentCard();
-        rebuildPriorityActions();
+        refreshTodayUI({
+          qci: false,
+          summary: true,
+          priorityActions: true,
+          nourishment: true,
+          workout: true
+        });
       });
     }
 
+    document.getElementById('returnCardDismiss')?.addEventListener('click', () => {
+      _returnDismissed = true;
+      const card = document.getElementById('returnCard');
+      if (card) {
+        card.classList.add('return-card--dismissing');
+        setTimeout(() => card.remove(), 350);
+      }
+    });
+
     bindPriorityActions();
+    bindStaticTiles();
     bindQci();
   }
 };
