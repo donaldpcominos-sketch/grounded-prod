@@ -1,37 +1,176 @@
 import { db } from '../lib/firebase.js';
-import { doc, getDoc, setDoc, getDocs, collection, query, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, getDocs, collection, query, orderBy, where } from 'firebase/firestore';
 import { getTodayKey } from '../utils.js';
 
 // ─── Habit definitions ────────────────────────────────────────────────────────
-// Single source of truth. Order here = display order.
 
 export const HABITS = [
   { id: 'water-3l',   label: '3L water',          emoji: '💧', color: '#6a8fb5' },
-  { id: 'steps-10k',  label: '10k steps',          emoji: '👟', color: '#7a9e7e' },
-  { id: 'workout',    label: 'Workout',             emoji: '🏋️', color: '#b07060' },
-  { id: 'vitamins',   label: 'Take my vitamins',   emoji: '💊', color: '#6a9fa8' },
-  { id: 'no-alcohol', label: 'No alcohol',         emoji: '🚫', color: '#c97b6a' },
-  { id: 'read',       label: 'Read my book',       emoji: '📚', color: '#c8956b' },
-  { id: 'journal',    label: 'Journal',             emoji: '📓', color: '#7a9e7e' },
-  { id: 'winddown',   label: '1hr no phone time',  emoji: '📵', color: '#7b7fad' },
-  { id: 'skincare',   label: 'Skin care routine',  emoji: '✨', color: '#c4a882' },
-  { id: 'kiss',       label: 'Kiss my husband',    emoji: '💋', color: '#c47a8a' },
-  { id: 'friend',     label: 'Send Love 📱',       emoji: '💌', color: '#9b89c4' },
+  { id: 'steps-10k',  label: '10k steps',         emoji: '👟', color: '#7a9e7e' },
+  { id: 'workout',    label: 'Workout',           emoji: '🏋️', color: '#b07060' },
+  { id: 'vitamins',   label: 'Take my vitamins',  emoji: '💊', color: '#6a9fa8' },
+  { id: 'no-alcohol', label: 'No alcohol',        emoji: '🚫', color: '#c97b6a' },
+  { id: 'read',       label: 'Read my book',      emoji: '📚', color: '#c8956b' },
+  { id: 'journal',    label: 'Journal',           emoji: '📓', color: '#7a9e7e' },
+  { id: 'winddown',   label: '1hr no phone time', emoji: '📵', color: '#7b7fad' },
+  { id: 'skincare',   label: 'Skin care routine', emoji: '✨', color: '#c4a882' },
+  { id: 'kiss',       label: 'Kiss my husband',   emoji: '💋', color: '#c47a8a' },
+  { id: 'friend',     label: 'Send Love 📱',      emoji: '💌', color: '#9b89c4' },
 ];
 
-// ─── Read ─────────────────────────────────────────────────────────────────────
+// ─── Firestore: active habits ─────────────────────────────────────────────────
+
+export async function getHabits(userId) {
+  try {
+    const colRef = collection(db, 'users', userId, 'habits');
+    const q = query(
+      colRef,
+      where('active', '==', true),
+      orderBy('sortOrder', 'asc')
+    );
+    const snap = await getDocs(q);
+
+    if (snap.empty) return [];
+
+    return snap.docs.map(d => {
+      const data = d.data();
+      return {
+        id: d.id,
+        label: data.label ?? '',
+        emoji: data.emoji ?? '',
+        color: data.color ?? '#888888',
+        active: data.active ?? true
+      };
+    });
+  } catch (e) {
+    console.error('getHabits failed:', e);
+    return [];
+  }
+}
+
+// ─── Firestore: all habits ────────────────────────────────────────────────────
+
+export async function getAllHabits(userId) {
+  try {
+    const colRef = collection(db, 'users', userId, 'habits');
+    const q = query(colRef, orderBy('sortOrder', 'asc'));
+    const snap = await getDocs(q);
+
+    if (snap.empty) return [];
+
+    return snap.docs.map(d => {
+      const data = d.data();
+      return {
+        id: d.id,
+        label: data.label ?? '',
+        emoji: data.emoji ?? '',
+        color: data.color ?? '#888888',
+        active: data.active ?? true
+      };
+    });
+  } catch (e) {
+    console.error('getAllHabits failed:', e);
+    return [];
+  }
+}
+
+// ─── Create habit ─────────────────────────────────────────────────────────────
+
+export async function createHabit(userId, { label, emoji }) {
+  const slug = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+
+  const baseId = slug || 'habit';
+
+  const ref = doc(db, 'users', userId, 'habits', baseId);
+  const existing = await getDoc(ref);
+  const habitId = existing.exists() ? `${baseId}-${Date.now()}` : baseId;
+
+  const finalRef = doc(db, 'users', userId, 'habits', habitId);
+
+  const habit = {
+    id: habitId,
+    label: label.trim(),
+    emoji: emoji.trim() || '⭐',
+    active: true,
+    createdAt: new Date().toISOString(),
+    sortOrder: Date.now()
+  };
+
+  await setDoc(finalRef, habit);
+
+  return {
+    ...habit,
+    createdAt: new Date().toISOString()
+  };
+}
+
+// ─── NEW: Update habit (rename / emoji) ───────────────────────────────────────
+
+export async function updateHabit(userId, habitId, updates) {
+  const ref = doc(db, 'users', userId, 'habits', habitId);
+
+  // Only allow safe fields
+  const safeUpdates = {
+    ...(updates.label !== undefined && { label: updates.label.trim() }),
+    ...(updates.emoji !== undefined && { emoji: updates.emoji.trim() })
+  };
+
+  await setDoc(ref, safeUpdates, { merge: true });
+}
+
+// ─── NEW: Update habit order  ───────────────────────────────────────
+
+export async function updateHabitOrder(userId, updates) {
+  const promises = updates.map(({ id, sortOrder }) => {
+    const ref = doc(db, 'users', userId, 'habits', id);
+    return setDoc(ref, { sortOrder }, { merge: true });
+  });
+
+  await Promise.all(promises);
+}
+
+// ─── Toggle active ────────────────────────────────────────────────────────────
+
+export async function updateHabitActive(userId, habitId, active) {
+  const ref = doc(db, 'users', userId, 'habits', habitId);
+  await setDoc(ref, { active }, { merge: true });
+}
+
+// ─── Read logs ────────────────────────────────────────────────────────────────
 
 export async function getHabitLog(userId, dateKey) {
   const ref = doc(db, 'users', userId, 'habitLogs', dateKey);
   const snap = await getDoc(ref);
   if (!snap.exists()) return {};
-  return snap.data().habits || {};
+
+  const habits = snap.data().habits || {};
+
+  const normalised = {};
+  for (const key in habits) {
+    if (typeof habits[key] === 'boolean') {
+      normalised[key] = {
+        completed: habits[key],
+        labelSnapshot: null,
+        emojiSnapshot: null
+      };
+    } else {
+      normalised[key] = habits[key];
+    }
+  }
+
+  return normalised;
 }
 
 export async function getHabitLogsRange(userId, startKey, endKey) {
   const colRef = collection(db, 'users', userId, 'habitLogs');
-  const q = query(colRef, orderBy('__name__'), limit(60));
+  const q = query(colRef, orderBy('__name__'));
   const snap = await getDocs(q);
+
   const result = {};
   snap.forEach(d => {
     const dateKey = d.id;
@@ -39,30 +178,36 @@ export async function getHabitLogsRange(userId, startKey, endKey) {
       result[dateKey] = d.data().habits || {};
     }
   });
+
   return result;
 }
 
-// ─── Write ────────────────────────────────────────────────────────────────────
+// ─── Write logs ───────────────────────────────────────────────────────────────
 
-export async function saveHabitLog(userId, dateKey, habits) {
-  const ref = doc(db, 'users', userId, 'habitLogs', dateKey);
-  await setDoc(ref, { date: dateKey, habits }, { merge: true });
-}
-
-export async function toggleHabit(userId, dateKey, habitId, value) {
+export async function toggleHabit(userId, dateKey, habitId, value, habitMeta = {}) {
   const ref = doc(db, 'users', userId, 'habitLogs', dateKey);
   const snap = await getDoc(ref);
   const existing = snap.exists() ? (snap.data().habits || {}) : {};
-  const updated = { ...existing, [habitId]: value };
+
+  const updated = {
+    ...existing,
+    [habitId]: {
+      completed: value,
+      labelSnapshot: habitMeta.label || null,
+      emojiSnapshot: habitMeta.emoji || null
+    }
+  };
+
   await setDoc(ref, { date: dateKey, habits: updated }, { merge: true });
+
   return updated;
 }
 
-// ─── Streak calculation ───────────────────────────────────────────────────────
+// ─── Streaks ──────────────────────────────────────────────────────────────────
 
-export function computeStreaks(logsMap, todayKey) {
+export function computeStreaks(logsMap, todayKey, habitDefinitions = HABITS) {
   const streaks = {};
-  for (const habit of HABITS) {
+  for (const habit of habitDefinitions) {
     streaks[habit.id] = computeStreak(logsMap, habit.id, todayKey);
   }
   return streaks;
@@ -74,7 +219,7 @@ function computeStreak(logsMap, habitId, todayKey) {
   let missedOnce = false;
 
   for (const day of days) {
-    const done = logsMap[day]?.[habitId] === true;
+    const done = logsMap[day]?.[habitId]?.completed === true;
     if (done) {
       streak++;
       missedOnce = false;
@@ -115,11 +260,13 @@ export function buildCalendarDays(todayKey) {
   const today = new Date(todayKey + 'T12:00:00');
   const dow = today.getDay();
   const daysFromMon = dow === 0 ? 6 : dow - 1;
+
   const startMonday = new Date(today);
   startMonday.setDate(today.getDate() - daysFromMon - 21);
 
   const days = [];
   const cur = new Date(startMonday);
+
   for (let i = 0; i < 28; i++) {
     const key = getDateKey(cur);
     days.push({
@@ -131,5 +278,6 @@ export function buildCalendarDays(todayKey) {
     });
     cur.setDate(cur.getDate() + 1);
   }
+
   return days;
 }
