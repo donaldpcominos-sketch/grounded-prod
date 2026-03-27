@@ -1,15 +1,15 @@
 // src/services/notifications.js
-// Handles FCM token registration, permission requests, and notification preferences.
+// Handles FCM token registration, permission requests, notification preferences,
+// and notification runtime state.
 //
-// Preferences are stored at: users/{userId}/preferences/notifications
+// Preferences path:   users/{userId}/preferences/notifications
+// Runtime state path: users/{userId}/notificationState/current
 //
-// On first read:
-//   - If the document exists, return it merged over defaults (always complete).
-//   - If it does not exist, seed the full default shape to Firestore immediately
-//     (migrating any legacy user-doc values), then return it.
+// On first read of either document, if it does not exist, the full default
+// shape is written to Firestore automatically — no manual setup required.
 //
-// Granular save helpers always use { merge: true } against a document that is
-// guaranteed to be fully seeded on first load, so no partial shape can accumulate.
+// This file owns persistence and normalisation only.
+// All decision logic lives in src/domain/notifications.js.
 
 import { db } from '../lib/firebase.js';
 import {
@@ -19,7 +19,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 
-// ─── Single source of truth for the preferences shape ─────────────────────────
+// ─── Preferences: source of truth for shape ───────────────────────────────────
 
 export const DEFAULT_NOTIFICATION_PREFS = {
   masterEnabled:       false,
@@ -33,19 +33,52 @@ export const DEFAULT_NOTIFICATION_PREFS = {
   nudgesEnabled:       false,
 };
 
-// ─── Internal helpers ─────────────────────────────────────────────────────────
+// ─── Notification runtime state: source of truth for shape ────────────────────
+
+export const DEFAULT_NOTIFICATION_STATE = {
+  lastDailyReminderSentAt:    null,
+  lastNudgeSentAt:            null,
+  lastOpenedAt:               null,
+  lastMeaningfulEngagementAt: null,
+};
+
+// ─── Firestore refs ───────────────────────────────────────────────────────────
 
 function prefsRef(userId) {
   return doc(db, 'users', userId, 'preferences', 'notifications');
 }
 
-// Always return a complete preferences object regardless of what is stored.
-function normalise(stored) {
+function stateRef(userId) {
+  return doc(db, 'users', userId, 'notificationState', 'current');
+}
+
+// ─── Internal normalisation ───────────────────────────────────────────────────
+
+function normalisePrefs(stored) {
   return { ...DEFAULT_NOTIFICATION_PREFS, ...stored };
 }
 
-// Write the full document to Firestore — never a partial shape.
-// Uses plain setDoc (no merge) so the document is always fully formed.
+// Convert Firestore Timestamp fields to JS Dates (or null) so domain logic
+// is never exposed to Firestore SDK types.
+function normaliseState(stored) {
+  function toDate(val) {
+    if (!val) return null;
+    if (val instanceof Date) return val;
+    if (typeof val.toDate === 'function') return val.toDate();
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  return {
+    lastDailyReminderSentAt:    toDate(stored?.lastDailyReminderSentAt),
+    lastNudgeSentAt:            toDate(stored?.lastNudgeSentAt),
+    lastOpenedAt:               toDate(stored?.lastOpenedAt),
+    lastMeaningfulEngagementAt: toDate(stored?.lastMeaningfulEngagementAt),
+  };
+}
+
+// ─── Internal seed helpers ────────────────────────────────────────────────────
+
 async function seedPrefs(userId, prefs, fcmToken = null) {
   await setDoc(prefsRef(userId), {
     ...DEFAULT_NOTIFICATION_PREFS,
@@ -55,9 +88,14 @@ async function seedPrefs(userId, prefs, fcmToken = null) {
   });
 }
 
+async function seedState(userId) {
+  await setDoc(stateRef(userId), {
+    ...DEFAULT_NOTIFICATION_STATE,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 // ─── FCM token ────────────────────────────────────────────────────────────────
-// Dynamically imported to keep the main bundle lean for users who never
-// enable notifications.
 
 async function getFCMToken() {
   try {
@@ -93,7 +131,7 @@ export function notificationsSupported() {
 
 export function getPermissionState() {
   if (!notificationsSupported()) return 'unsupported';
-  return Notification.permission; // 'default' | 'granted' | 'denied'
+  return Notification.permission;
 }
 
 export async function requestPermission() {
@@ -103,20 +141,15 @@ export async function requestPermission() {
 }
 
 // ─── Load preferences ─────────────────────────────────────────────────────────
-// Always returns a full, normalised preferences object.
-// Auto-creates the Firestore document on first visit — no manual setup needed.
 
 export async function loadNotificationPrefs(userId) {
   try {
     const snap = await getDoc(prefsRef(userId));
 
     if (snap.exists()) {
-      // Document already exists. Normalise in case new fields have been added
-      // to DEFAULT_NOTIFICATION_PREFS since this user's document was created.
-      return normalise(snap.data());
+      return normalisePrefs(snap.data());
     }
 
-    // ── Document does not exist yet ──
     // Check for legacy fields on the user doc and migrate them.
     let migrated = {};
     try {
@@ -132,28 +165,86 @@ export async function loadNotificationPrefs(userId) {
         }
       }
     } catch {
-      // Legacy read failure is non-fatal — proceed with pure defaults.
+      // Non-fatal — proceed with pure defaults.
     }
 
-    // Seed the full document to Firestore immediately so the next read
-    // finds a complete document and no other path needs to handle missing docs.
-    const prefs = normalise(migrated);
+    const prefs = normalisePrefs(migrated);
     await seedPrefs(userId, prefs);
     return prefs;
 
   } catch {
-    // Firestore unavailable — return in-memory defaults so the UI still renders.
     return { ...DEFAULT_NOTIFICATION_PREFS };
   }
 }
 
-// ─── Granular save helpers ────────────────────────────────────────────────────
-// The document is guaranteed to be fully seeded by loadNotificationPrefs before
-// any of these are called. All helpers use { merge: true } so only the changed
-// fields are written and all other fields are preserved intact.
+// ─── Load notification runtime state ─────────────────────────────────────────
+
+export async function loadNotificationState(userId) {
+  try {
+    const snap = await getDoc(stateRef(userId));
+
+    if (snap.exists()) {
+      return normaliseState(snap.data());
+    }
+
+    await seedState(userId);
+    return { ...DEFAULT_NOTIFICATION_STATE };
+
+  } catch {
+    return { ...DEFAULT_NOTIFICATION_STATE };
+  }
+}
+
+// ─── Convenience: load prefs and state in parallel ───────────────────────────
+// Saves callers from orchestrating two parallel fetches themselves.
+// Returns { prefs, notifState }.
+
+export async function loadNotificationData(userId) {
+  const [prefs, notifState] = await Promise.all([
+    loadNotificationPrefs(userId),
+    loadNotificationState(userId),
+  ]);
+  return { prefs, notifState };
+}
+
+// ─── Save notification runtime state ─────────────────────────────────────────
+
+export async function saveNotificationState(userId, fields) {
+  await setDoc(stateRef(userId), {
+    ...fields,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+// ─── Convenience state writers ────────────────────────────────────────────────
+
+export async function recordDailyReminderSent(userId) {
+  await saveNotificationState(userId, {
+    lastDailyReminderSentAt: serverTimestamp(),
+  });
+}
+
+export async function recordNudgeSent(userId) {
+  await saveNotificationState(userId, {
+    lastNudgeSentAt: serverTimestamp(),
+  });
+}
+
+export async function recordAppOpened(userId) {
+  await saveNotificationState(userId, {
+    lastOpenedAt: serverTimestamp(),
+  });
+}
+
+export async function recordMeaningfulEngagement(userId) {
+  await saveNotificationState(userId, {
+    lastMeaningfulEngagementAt: serverTimestamp(),
+  });
+}
+
+// ─── Preferences: granular save helpers ──────────────────────────────────────
 
 export async function saveMasterEnabled(userId, enabled) {
-  // Fetch FCM token when enabling so it is always current.
   const token = enabled ? await getFCMToken() : null;
   await setDoc(prefsRef(userId), {
     masterEnabled: enabled,

@@ -4701,14 +4701,13 @@ body {
   );
 }
 /* ─── Notification preferences UI ───────────────────────────────────────────── */
+/* Phase 1: preference card classes.                                              */
+/* Existing notif-row, notif-toggle, notif-toggle-track, notif-time-row,         */
+/* notif-time-row--hidden, notif-time-label, notif-time-input, notif-hint        */
+/* are already defined earlier in this file and are not redefined here.          */
 
-.notif-detail {
-  overflow: hidden;
-}
-
-.notif-detail--hidden {
-  display: none;
-}
+.notif-detail { overflow: hidden; }
+.notif-detail--hidden { display: none; }
 
 .notif-section-divider {
   height: 1px;
@@ -4733,4 +4732,90 @@ body {
   align-items: center;
   gap: 8px;
   flex: 1;
+}
+
+/* ─── In-app reminder banner ─────────────────────────────────────────────────── */
+/* Phase 3: shown on the Today screen when the reminder decision is eligible.    */
+/* Calm, minimal, dismissible. Sits between the return card and priority actions. */
+
+.reminder-banner {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  padding: 16px 20px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  animation: reminder-banner-in 0.25s ease both;
+}
+
+@keyframes reminder-banner-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.reminder-banner--dismissing {
+  animation: reminder-banner-out 0.3s ease both;
+  pointer-events: none;
+}
+
+@keyframes reminder-banner-out {
+  from { opacity: 1; transform: translateY(0); max-height: 120px; }
+  to   { opacity: 0; transform: translateY(-4px); max-height: 0; padding: 0; margin: 0; }
+}
+
+.reminder-banner-inner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reminder-banner-text {
+  flex: 1;
+}
+
+.reminder-banner-headline {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-ink);
+  line-height: 1.4;
+}
+
+.reminder-banner-body {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--color-ink-3);
+  line-height: 1.55;
+}
+
+.reminder-banner-dismiss {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 14px;
+  color: var(--color-ink-4);
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+  margin-top: 2px;
+  transition: color 0.15s ease;
+}
+
+.reminder-banner-dismiss:hover {
+  color: var(--color-ink-2);
+}
+
+/* ─── Reminder banner: messageType modifiers ─────────────────────────────────── */
+/* Phase 5: tonal styling variation keyed to engagement state.                   */
+/* Both modifiers use a left border accent — subtle, premium, non-gamified.      */
+/* Base .reminder-banner styles are defined above and are unchanged.             */
+
+.reminder-banner--soft {
+  border-left: 3px solid rgba(90, 122, 90, 0.45);
+  padding-left: 17px; /* compensate for the extra border width (20px - 3px) */
+}
+
+.reminder-banner--gentle {
+  border-left: 3px solid var(--color-border);
+  padding-left: 17px;
 }

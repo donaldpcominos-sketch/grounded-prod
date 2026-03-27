@@ -415,19 +415,47 @@ function bindEvents() {
     const enabling = e.target.checked;
 
     if (enabling) {
-      const permission = await requestPermission();
-      state.notifPermission = permission;
-      if (permission === 'denied') {
-        showToast('Notifications are blocked. Enable them in browser settings.', 'error', 5000);
+      const current = Notification.permission;
+
+      // Already denied at the OS/browser level — cannot request again.
+      if (current === 'denied') {
+        showToast(
+          'Notifications are blocked in your browser. You can enable them in browser settings.',
+          'error',
+          6000,
+        );
         e.target.checked = false;
+        // Re-render so the card switches to the blocked state.
+        state.notifPermission = 'denied';
         render();
         return;
       }
-      if (permission !== 'granted') {
-        showToast('Permission not granted.', 'error', 3000);
-        e.target.checked = false;
-        return;
+
+      // Not yet decided — ask the user now (only triggered by this interaction).
+      if (current === 'default') {
+        const result = await requestPermission();
+        state.notifPermission = result;
+
+        if (result === 'granted') {
+          // Permission granted — fall through to save below.
+        } else if (result === 'denied') {
+          showToast(
+            'Notifications are blocked in your browser. You can enable them in browser settings.',
+            'error',
+            6000,
+          );
+          e.target.checked = false;
+          render();
+          return;
+        } else {
+          // User dismissed the prompt without choosing ('default' returned again).
+          showToast('Notifications weren\'t enabled — you can try again any time.', 'error', 4000);
+          e.target.checked = false;
+          return;
+        }
       }
+
+      // current === 'granted' falls straight through here with no prompt needed.
     }
 
     state.notifPrefs.masterEnabled = enabling;

@@ -11,6 +11,17 @@ import { getDailyState } from '../domain/dailyState.js';
 import { getTodayRecommendations } from '../domain/recommendations.js';
 import { getTodaySummary } from '../domain/summary.js';
 import { getDayContext } from '../domain/dayContext.js';
+import {
+  getReminderDecision,
+  getMeaningfulEngagement,
+  classifyEngagementState,
+} from '../domain/notifications.js';
+import {
+  loadNotificationData,
+  recordAppOpened,
+  recordMeaningfulEngagement,
+  recordDailyReminderSent,
+} from '../services/notifications.js';
 
 // ─── Weather card ─────────────────────────────────────────────────────────────
 
@@ -67,9 +78,58 @@ function renderWeatherCard(weather) {
 
 function getReturnMessage(gapHours) {
   if (gapHours <= 48) return null;
-  if (gapHours > 7 * 24) return { headline: 'You’ve been away for a while.', sub: 'This is your space. Take your time — no catch-up needed.' };
-  if (gapHours > 3 * 24) return { headline: 'It’s been a few days.', sub: 'Welcome back. No pressure — just checking in when you’re ready.' };
-  return { headline: 'Good to see you again.', sub: 'It’s been a couple of days. Start wherever feels right.' };
+  if (gapHours > 7 * 24) {
+    return {
+      headline: "You've been away for a while.",
+      sub: 'This is your space. Take your time — no catch-up needed.'
+    };
+  }
+  if (gapHours > 3 * 24) {
+    return {
+      headline: "It's been a few days.",
+      sub: "Welcome back. No pressure — just checking in when you're ready."
+    };
+  }
+  return {
+    headline: 'Good to see you again.',
+    sub: "It's been a couple of days. Start wherever feels right."
+  };
+}
+
+// ─── In-app reminder banner ───────────────────────────────────────────────────
+// Rendered only when getReminderDecision says shouldSendReminder === true.
+// messageType drives the modifier class for tonal styling variation:
+//   'soft'   — user has already started; warmer, acknowledging tone
+//   'gentle' — user hasn't started yet; calm, inviting tone
+
+function renderReminderBanner(decision) {
+  if (!decision?.shouldSendReminder) return '';
+
+  const typeClass = decision.messageType === 'soft'
+    ? 'reminder-banner--soft'
+    : 'reminder-banner--gentle';
+
+  return `
+    <div
+      class="reminder-banner ${typeClass}"
+      id="reminderBanner"
+      data-message-type="${decision.messageType || 'gentle'}"
+      role="status"
+      aria-live="polite"
+    >
+      <div class="reminder-banner-inner">
+        <div class="reminder-banner-text">
+          <p class="reminder-banner-headline">${decision.headline}</p>
+          <p class="reminder-banner-body">${decision.body}</p>
+        </div>
+        <button
+          class="reminder-banner-dismiss"
+          id="reminderBannerDismiss"
+          aria-label="Dismiss reminder"
+        >✕</button>
+      </div>
+    </div>
+  `;
 }
 
 // ─── Quick check-in ───────────────────────────────────────────────────────────
@@ -145,65 +205,26 @@ function getPriorityActionsMeta(state) {
 
   switch (context.tone) {
     case 'welcome-back':
-      return {
-        title: 'Start gently',
-        subtitle: 'A few small suggestions to help you ease back in.'
-      };
-
+      return { title: 'Start gently', subtitle: 'A few small suggestions to help you ease back in.' };
     case 'gentle-reset':
-      return {
-        title: 'Gentle reset',
-        subtitle: 'A few simple suggestions to help steady the day.'
-      };
-
+      return { title: 'Gentle reset', subtitle: 'A few simple suggestions to help steady the day.' };
     case 'check-in-first':
-      return {
-        title: 'Start here',
-        subtitle: 'A quick check-in will help shape the rest of the day.'
-      };
-
+      return { title: 'Start here', subtitle: 'A quick check-in will help shape the rest of the day.' };
     case 'protect-momentum':
-      return {
-        title: 'Keep it steady',
-        subtitle: 'You already have momentum this week — keep today realistic.'
-      };
-
+      return { title: 'Keep it steady', subtitle: 'You already have momentum this week — keep today realistic.' };
     case 'build-momentum':
-      return {
-        title: 'Keep the rhythm going',
-        subtitle: 'A few well-placed actions could carry your momentum forward.'
-      };
-
+      return { title: 'Keep the rhythm going', subtitle: 'A few well-placed actions could carry your momentum forward.' };
     case 'start-small':
-      return {
-        title: 'Start small',
-        subtitle: 'One or two simple actions are enough to shift the day.'
-      };
-
+      return { title: 'Start small', subtitle: 'One or two simple actions are enough to shift the day.' };
     case 'reset-week':
-      return {
-        title: 'Small reset',
-        subtitle: 'A couple of grounded actions could help reset the tone of the week.'
-      };
-
+      return { title: 'Small reset', subtitle: 'A couple of grounded actions could help reset the tone of the week.' };
     case 'low-energy':
-      return {
-        title: 'Keep it light',
-        subtitle: 'Focus on the essentials and let that be enough for today.'
-      };
-
+      return { title: 'Keep it light', subtitle: 'Focus on the essentials and let that be enough for today.' };
     case 'high-energy-move':
-      return {
-        title: 'Use the energy well',
-        subtitle: 'A few intentional actions could make today feel really good.'
-      };
-
+      return { title: 'Use the energy well', subtitle: 'A few intentional actions could make today feel really good.' };
     case 'steady-day':
     default:
-      return {
-        title: 'Priority actions',
-        subtitle: 'A few gentle suggestions for today.'
-      };
+      return { title: 'Priority actions', subtitle: 'A few gentle suggestions for today.' };
   }
 }
 
@@ -291,7 +312,6 @@ function renderWorkoutTile(savedSession, state) {
   if (!split) return '';
 
   const context = getDayContext(state);
-
   const isDone = savedSession?.status === 'complete';
   const isAlternate = savedSession?.type === 'alternate';
 
@@ -326,49 +346,27 @@ function getWorkoutTileFocus(split, context, isDone) {
     if (context.momentumBand === 'strong') return 'Another steady step in a strong week';
     return 'Movement done for today';
   }
-
-  if (context.tone === 'welcome-back') {
-    return 'Ease back in gently today';
-  }
-
-  if (context.tone === 'gentle-reset') {
-    return 'A little movement could help reset the day';
-  }
-
-  if (context.energyBand === 'low') {
-    return 'Keep it light today';
-  }
-
-  if (context.tone === 'protect-momentum') {
-    return 'Momentum is already there — keep today realistic';
-  }
-
-  if (context.tone === 'build-momentum') {
-    return 'A good chance to keep your rhythm going';
-  }
-
-  if (context.tone === 'reset-week') {
-    return 'A small session could shift the tone of the week';
-  }
-
-  if (context.energyBand === 'high') {
-    return 'Good day to lean into your energy';
-  }
-
+  if (context.tone === 'welcome-back')     return 'Ease back in gently today';
+  if (context.tone === 'gentle-reset')     return 'A little movement could help reset the day';
+  if (context.energyBand === 'low')        return 'Keep it light today';
+  if (context.tone === 'protect-momentum') return 'Momentum is already there — keep today realistic';
+  if (context.tone === 'build-momentum')   return 'A good chance to keep your rhythm going';
+  if (context.tone === 'reset-week')       return 'A small session could shift the tone of the week';
+  if (context.energyBand === 'high')       return 'Good day to lean into your energy';
   return split.focus;
 }
 
 // ─── Habits entry tile ────────────────────────────────────────────────────────
 
 function getHabitsProgressMeta(habitsState, habitsProgress) {
-  const total = habitsState?.totalCount ?? HABITS.length;
+  const total    = habitsState?.totalCount ?? HABITS.length;
   const doneCount = habitsState?.completedCount ?? 0;
 
-  const activeDays = habitsProgress?.activeHabitsDays ?? 0;
-  const perfectDays = habitsProgress?.activePerfectHabitDays ?? 0;
-  const perfectRate = habitsProgress?.activePerfectHabitsCompletionRate ?? 0;
+  const activeDays           = habitsProgress?.activeHabitsDays ?? 0;
+  const perfectDays          = habitsProgress?.activePerfectHabitDays ?? 0;
+  const perfectRate          = habitsProgress?.activePerfectHabitsCompletionRate ?? 0;
   const currentPerfectStreak = habitsProgress?.activePerfectHabitCurrentStreak ?? 0;
-  const bestPerfectStreak = habitsProgress?.activePerfectHabitBestStreak ?? 0;
+  const bestPerfectStreak    = habitsProgress?.activePerfectHabitBestStreak ?? 0;
 
   let headline = '';
   if (perfectDays === 7) {
@@ -399,14 +397,12 @@ function getHabitsProgressMeta(habitsState, habitsProgress) {
     streakNote = `Best perfect streak: ${bestPerfectStreak} day${bestPerfectStreak === 1 ? '' : 's'}`;
   }
 
-  const stats = [
-    `${activeDays}/7 active days`,
-    `${perfectDays}/7 perfect days this week`
-  ];
-
   return {
     headline,
-    stats,
+    stats: [
+      `${activeDays}/7 active days`,
+      `${perfectDays}/7 perfect days this week`
+    ],
     streakNote,
     perfectDays,
     perfectRate
@@ -415,13 +411,13 @@ function getHabitsProgressMeta(habitsState, habitsProgress) {
 
 function renderHabitsTile(habitsState, habitsProgress) {
   const doneCount = habitsState?.completedCount ?? 0;
-  const total = habitsState?.totalCount ?? HABITS.length;
-  const allDone = total > 0 && doneCount === total;
+  const total     = habitsState?.totalCount ?? HABITS.length;
+  const allDone   = total > 0 && doneCount === total;
 
-  const progressMeta = getHabitsProgressMeta(habitsState, habitsProgress);
+  const progressMeta  = getHabitsProgressMeta(habitsState, habitsProgress);
   const perfectProgress = progressMeta.perfectDays / 7;
 
-  const innerCirc = 87.96;
+  const innerCirc   = 87.96;
   const innerFilled = total > 0 ? (doneCount / total) * innerCirc : 0;
 
   const tileClasses = [
@@ -430,9 +426,9 @@ function renderHabitsTile(habitsState, habitsProgress) {
   ].join(' ');
 
   return `
-    <button 
-      class="${tileClasses}" 
-      id="habitsTileBtn" 
+    <button
+      class="${tileClasses}"
+      id="habitsTileBtn"
       aria-label="Open habits tracker"
       style="--perfect-progress:${perfectProgress}"
     >
@@ -448,21 +444,16 @@ function renderHabitsTile(habitsState, habitsProgress) {
               <circle class="habits-ring-bg" cx="18" cy="18" r="14" fill="none"/>
               <circle
                 class="habits-ring-fill"
-                cx="18"
-                cy="18"
-                r="14"
-                fill="none"
+                cx="18" cy="18" r="14" fill="none"
                 stroke="${allDone ? '#5a7a5a' : 'var(--color-ink-2)'}"
                 stroke-dasharray="${innerFilled.toFixed(2)} ${innerCirc.toFixed(2)}"
                 stroke-dashoffset="0"
               />
             </svg>
-
             ${allDone
               ? '<span class="habits-ring-check">✓</span>'
               : `<span class="habits-ring-pct">${Math.round((doneCount / total) * 100)}%</span>`}
           </div>
-
           <span class="workout-tile-arrow">→</span>
         </div>
       </div>
@@ -477,11 +468,9 @@ function renderHabitsTile(habitsState, habitsProgress) {
 
       <div class="habits-tile-progress">
         <p class="habits-tile-note">${progressMeta.headline}</p>
-
         <div class="habits-tile-stats">
           ${progressMeta.stats.map(stat => `<span class="habits-tile-stat">${stat}</span>`).join('')}
         </div>
-
         ${progressMeta.streakNote
           ? `<p class="habits-tile-streak-note">${progressMeta.streakNote}</p>`
           : ''}
@@ -507,7 +496,7 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-function renderView(user, state, returnMsg, weather, recommendations, weekSummary) {
+function renderView(user, state, returnMsg, weather, recommendations, weekSummary, reminderDecision) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -530,6 +519,7 @@ function renderView(user, state, returnMsg, weather, recommendations, weekSummar
 </p>
 
         ${renderReturnCard(returnMsg)}
+        ${renderReminderBanner(reminderDecision)}
         ${renderPriorityActions(recommendations, state)}
         ${renderWeatherCard(weather)}
         ${renderQuickCheckin(state.wellness.mood || '', state.wellness.energy || '')}
@@ -553,20 +543,30 @@ export const TodayView = {
   async init(container, user) {
     container.innerHTML = '<div class="loading-state"><p>Loading your dashboard…</p></div>';
 
-    const [state, weather, weekSummary] = await Promise.all([
+    const [state, weather, weekSummary, notifData] = await Promise.all([
       getDailyState(user.uid),
       fetchWeather().catch(() => null),
-      getWeekSummary(user.uid).catch(() => null)
+      getWeekSummary(user.uid).catch(() => null),
+      loadNotificationData(user.uid).catch(() => ({ prefs: null, notifState: null })),
     ]);
 
+    // Record app opened. Fire-and-forget — never blocks the render.
+    recordAppOpened(user.uid).catch(() => {});
+
     touchLastActive(user.uid);
+
+    // Evaluate reminder eligibility. Suppressed for the session if the user
+    // already dismissed the banner during this session.
+    const reminderDecision = (!_reminderDismissed && notifData.prefs && notifData.notifState)
+      ? getReminderDecision(notifData.prefs, state, notifData.notifState)
+      : null;
 
     const returnMsg = _returnDismissed ? null : getReturnMessage(state.lastSeen?.gapHours ?? 0);
 
     const viewState = {
       ...state,
       wellness: { ...state.wellness },
-      habits: { ...state.habits }
+      habits:   { ...state.habits },
     };
 
     let habitsWeekSummary = weekSummary;
@@ -575,22 +575,52 @@ export const TodayView = {
       return getTodayRecommendations(viewState);
     }
 
-    container.innerHTML = renderView(user, viewState, returnMsg, weather, getRecommendations(), habitsWeekSummary);
+    container.innerHTML = renderView(
+      user,
+      viewState,
+      returnMsg,
+      weather,
+      getRecommendations(),
+      habitsWeekSummary,
+      reminderDecision,
+    );
+
+    // Record the reminder as sent immediately after rendering, so it cannot
+    // reappear today even if the user dismisses it and reopens the app.
+    if (reminderDecision?.shouldSendReminder) {
+      recordDailyReminderSent(user.uid).catch(() => {});
+    }
 
     const wellnessState = viewState.wellness;
     let habitsRefreshSeq = 0;
 
+    // ── Banner auto-hide helper ──────────────────────────────────────────────
+    // Called whenever the engagement state may have changed during the session.
+    // Uses the pure domain function — no Firestore read required.
+    // Hides the banner smoothly if the day is now classified as done.
+    function hideReminderBannerIfDone(updatedViewState) {
+      const banner = document.getElementById('reminderBanner');
+      if (!banner) return; // already gone
+
+      const newEngagementState = classifyEngagementState(updatedViewState);
+      if (newEngagementState === 'done') {
+        banner.classList.add('reminder-banner--dismissing');
+        setTimeout(() => banner.remove(), 300);
+      }
+    }
+
+    // ── Bind events ──────────────────────────────────────────────────────────
+
     function bindPriorityActions() {
       document.querySelectorAll('.priority-action').forEach(btn => {
         btn.addEventListener('click', () => {
-          const route = btn.dataset.recRoute;
+          const route    = btn.dataset.recRoute;
           const targetId = btn.dataset.recTarget;
 
           if (targetId) {
             const target = document.getElementById(targetId);
             if (target) {
               target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
               target.classList.add('today-target-pulse');
               setTimeout(() => target.classList.remove('today-target-pulse'), 1200);
             }
@@ -612,6 +642,18 @@ export const TodayView = {
 
       document.getElementById('habitsTileBtn')?.addEventListener('click', () => {
         navigateTo('habits');
+      });
+    }
+
+    function bindReminderBanner() {
+      document.getElementById('reminderBannerDismiss')?.addEventListener('click', () => {
+        const banner = document.getElementById('reminderBanner');
+        if (!banner) return;
+        // Mark dismissed for the session so it does not reappear if the user
+        // navigates away and returns to Today.
+        _reminderDismissed = true;
+        banner.classList.add('reminder-banner--dismissing');
+        setTimeout(() => banner.remove(), 300);
       });
     }
 
@@ -687,13 +729,22 @@ export const TodayView = {
       const seq = ++habitsRefreshSeq;
 
       try {
-        const freshState = await getDailyState(user.uid);
+        const freshState       = await getDailyState(user.uid);
         const freshWeekSummary = await getWeekSummary(user.uid);
 
         if (seq !== habitsRefreshSeq) return;
 
-        viewState.habits = freshState.habits;
+        viewState.habits  = freshState.habits;
         habitsWeekSummary = freshWeekSummary;
+
+        // Record engagement if habits have been completed.
+        if (freshState.habits?.completedCount > 0) {
+          recordMeaningfulEngagement(user.uid).catch(() => {});
+        }
+
+        // Merge fresh habits into viewState so the engagement check is accurate.
+        const mergedState = { ...viewState, habits: freshState.habits };
+        hideReminderBannerIfDone(mergedState);
 
         rebuildHabitsTile();
         rebuildSummary();
@@ -705,26 +756,25 @@ export const TodayView = {
 
     function refreshTodayUI(options = {}) {
       const {
-        qci = true,
-        summary = true,
+        qci           = true,
+        summary       = true,
         priorityActions = true,
-        nourishment = true,
-        workout = true,
-        habits = true
+        nourishment   = true,
+        workout       = true,
+        habits        = true
       } = options;
 
-      if (qci) rebuildQci();
-      if (summary) rebuildSummary();
+      if (qci)             rebuildQci();
+      if (summary)         rebuildSummary();
       if (priorityActions) rebuildPriorityActions();
-      if (nourishment) rebuildNourishmentCard();
-      if (workout) rebuildWorkoutTile();
-      if (habits) rebuildHabitsTile();
+      if (nourishment)     rebuildNourishmentCard();
+      if (workout)         rebuildWorkoutTile();
+      if (habits)          rebuildHabitsTile();
     }
 
     function showQciTick() {
       const qci = document.getElementById('quickCheckin');
       if (!qci) return;
-
       qci.classList.add('qci-card--saved');
       setTimeout(() => qci.classList.remove('qci-card--saved'), 900);
     }
@@ -733,9 +783,9 @@ export const TodayView = {
       document.querySelectorAll('[data-qci-group]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const group = btn.dataset.qciGroup;
-          const val = btn.dataset.value;
+          const val   = btn.dataset.value;
 
-          wellnessState[group] = val;
+          wellnessState[group]      = val;
           viewState.wellness[group] = val;
 
           document.querySelectorAll(`[data-qci-group="${group}"]`).forEach(b => {
@@ -747,10 +797,14 @@ export const TodayView = {
             await saveTodayWellnessCheckin(user.uid, wellnessState);
 
             if (wellnessState.mood && wellnessState.energy) {
+              // Check-in complete — record engagement and evaluate banner suppression.
+              recordMeaningfulEngagement(user.uid).catch(() => {});
+
+              const mergedState = { ...viewState, wellness: { ...wellnessState } };
+              hideReminderBannerIfDone(mergedState);
+
               showQciTick();
-              setTimeout(() => {
-                refreshTodayUI();
-              }, 700);
+              setTimeout(() => refreshTodayUI(), 700);
             }
           } catch {
             showToast('Save failed — try again', 'error');
@@ -762,9 +816,9 @@ export const TodayView = {
         const qci = document.getElementById('quickCheckin');
         if (!qci) return;
 
-        wellnessState.mood = '';
-        wellnessState.energy = '';
-        viewState.wellness.mood = '';
+        wellnessState.mood      = '';
+        wellnessState.energy    = '';
+        viewState.wellness.mood   = '';
         viewState.wellness.energy = '';
 
         const fresh = document.createElement('div');
@@ -773,21 +827,19 @@ export const TodayView = {
 
         bindQci();
         refreshTodayUI({
-          qci: false,
-          summary: true,
+          qci:            false,
+          summary:        true,
           priorityActions: true,
-          nourishment: true,
-          workout: true,
-          habits: true
+          nourishment:    true,
+          workout:        true,
+          habits:         true
         });
       });
     }
 
     function handleHabitsUpdated(event) {
       const detail = event?.detail || {};
-
       if (detail.source === 'today-view') return;
-
       refreshHabitsStateFromSource();
     }
 
@@ -805,6 +857,7 @@ export const TodayView = {
     bindPriorityActions();
     bindStaticTiles();
     bindQci();
+    bindReminderBanner();
 
     container._groundedCleanup = () => {
       window.removeEventListener('grounded:habits-updated', handleHabitsUpdated);
@@ -812,4 +865,8 @@ export const TodayView = {
   }
 };
 
-let _returnDismissed = false;
+// ─── Module-level session state ───────────────────────────────────────────────
+// Both flags live outside init so they survive navigation away and back.
+
+let _returnDismissed   = false;
+let _reminderDismissed = false;
