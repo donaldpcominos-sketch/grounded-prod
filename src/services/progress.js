@@ -6,6 +6,7 @@
 
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase.js';
+import { getHabits } from './habits.js';
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -60,41 +61,90 @@ function hasNourishment(nutrition) {
   return !!(nutrition && nutrition.nourished === true);
 }
 
-function hasCompletedHabitDay(habitLog) {
-  if (!habitLog || typeof habitLog !== 'object') return false;
-  return Object.values(habitLog).some(value => value === true);
+function isHabitValueCompleted(value) {
+  if (value === true) return true;
+  if (value && typeof value === 'object') return value.completed === true;
+  return false;
+}
+
+function getHabitEntries(habitLogDoc) {
+  const habits = habitLogDoc?.habits;
+  if (!habits || typeof habits !== 'object') return [];
+  return Object.values(habits);
+}
+
+function hasCompletedHabitDay(habitLogDoc) {
+  return getHabitEntries(habitLogDoc).some(isHabitValueCompleted);
+}
+
+function countCompletedHabits(habitLogDoc) {
+  return getHabitEntries(habitLogDoc).filter(isHabitValueCompleted).length;
+}
+
+function countCompletedActiveHabits(habitLogDoc, activeHabitIds) {
+  if (!habitLogDoc?.habits || !Array.isArray(activeHabitIds) || activeHabitIds.length === 0) {
+    return 0;
+  }
+
+  let completed = 0;
+
+  for (const habitId of activeHabitIds) {
+    if (isHabitValueCompleted(habitLogDoc.habits[habitId])) {
+      completed++;
+    }
+  }
+
+  return completed;
+}
+
+function isPerfectHabitDay(habitLogDoc, activeHabitIds) {
+  if (!Array.isArray(activeHabitIds) || activeHabitIds.length === 0) return false;
+  return countCompletedActiveHabits(habitLogDoc, activeHabitIds) >= activeHabitIds.length;
+}
+
+function getCurrentPerfectHabitStreak(habitLogs, activeHabitIds) {
+  let streak = 0;
+  for (const habitLog of habitLogs) {
+    if (isPerfectHabitDay(habitLog, activeHabitIds)) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
+function getBestPerfectHabitStreak(habitLogs, activeHabitIds) {
+  let best = 0;
+  let current = 0;
+
+  for (const habitLog of habitLogs) {
+    if (isPerfectHabitDay(habitLog, activeHabitIds)) {
+      current++;
+      if (current > best) best = current;
+    } else {
+      current = 0;
+    }
+  }
+
+  return best;
 }
 
 // ─── getWeekSummary ───────────────────────────────────────────────────────────
-// Legacy compatibility:
-//   workoutsDone
-//   journalDays
-//   avgHydration
-//   moodCounts
-//   nourishedDays
-//   hasAnyData
-//
-// New active metrics:
-//   activeWorkoutsDone
-//   activeNourishedDays
-//   activeHabitsDays
-//   activeCheckInDays
-//   activeHasAnyData
-//
-// Transparency flags:
-//   includesDormantJournal
-//   includesLegacyHydration
 
 export async function getWeekSummary(userId) {
   const keys = getLast7Keys();
 
-  const [workouts, journals, checkins, nutrition, habits] = await Promise.all([
+  const [workouts, journals, checkins, nutrition, habits, activeHabits] = await Promise.all([
     fetchDocs(userId, 'workoutSessions', keys),
     fetchDocs(userId, 'journalEntries', keys),
     fetchDocs(userId, 'wellnessCheckins', keys),
     fetchDocs(userId, 'nutritionLogs', keys),
     fetchDocs(userId, 'habitLogs', keys),
+    getHabits(userId).catch(() => [])
   ]);
+
+  const activeHabitIds = activeHabits.map(h => h.id);
 
   // ─── Legacy / compatibility metrics ────────────────────────────────────────
 
@@ -130,12 +180,34 @@ export async function getWeekSummary(userId) {
   const activeWorkoutsDone = workoutsDone;
   const activeNourishedDays = nourishedDays;
   const activeHabitsDays = habits.filter(hasCompletedHabitDay).length;
+  const activePerfectHabitDays = habits.filter(h => isPerfectHabitDay(h, activeHabitIds)).length;
   const activeCheckInDays = checkins.filter(hasCheckIn).length;
+
+  const activeHabitCompletionCounts = habits.map(h => countCompletedActiveHabits(h, activeHabitIds));
+  const activeHabitsTotalCompletions = activeHabitCompletionCounts.reduce((sum, count) => sum + count, 0);
+  const activeHabitsBestDay = activeHabitCompletionCounts.length > 0
+    ? Math.max(...activeHabitCompletionCounts)
+    : 0;
+
+  let activeHabitsCurrentStreak = 0;
+  for (const habitLog of habits) {
+    if (hasCompletedHabitDay(habitLog)) {
+      activeHabitsCurrentStreak++;
+    } else {
+      break;
+    }
+  }
+
+  const activeHabitsCompletionRate = Math.round((activeHabitsDays / keys.length) * 100);
+  const activePerfectHabitsCompletionRate = Math.round((activePerfectHabitDays / keys.length) * 100);
+  const activePerfectHabitCurrentStreak = getCurrentPerfectHabitStreak(habits, activeHabitIds);
+  const activePerfectHabitBestStreak = getBestPerfectHabitStreak(habits, activeHabitIds);
 
   const activeHasAnyData =
     activeWorkoutsDone > 0 ||
     activeNourishedDays > 0 ||
     activeHabitsDays > 0 ||
+    activePerfectHabitDays > 0 ||
     activeCheckInDays > 0;
 
   // ─── Transparency flags ────────────────────────────────────────────────────
@@ -156,7 +228,15 @@ export async function getWeekSummary(userId) {
     activeWorkoutsDone,
     activeNourishedDays,
     activeHabitsDays,
+    activePerfectHabitDays,
     activeCheckInDays,
+    activeHabitsCurrentStreak,
+    activeHabitsCompletionRate,
+    activePerfectHabitsCompletionRate,
+    activePerfectHabitCurrentStreak,
+    activePerfectHabitBestStreak,
+    activeHabitsTotalCompletions,
+    activeHabitsBestDay,
     activeHasAnyData,
 
     // structural transparency

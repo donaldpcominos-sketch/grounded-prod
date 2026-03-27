@@ -2,6 +2,7 @@ import { saveTodayWellnessCheckin } from '../services/wellness.js';
 import { touchLastActive } from '../services/lastSeen.js';
 import { getSuggestionsForEnergy } from '../data/nutrition.js';
 import { getTodayDisplay, showToast } from '../utils.js';
+import { getWeekSummary } from '../services/progress.js';
 import { fetchWeather } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
 import { HABITS } from '../services/habits.js';
@@ -74,16 +75,16 @@ function getReturnMessage(gapHours) {
 // ─── Quick check-in ───────────────────────────────────────────────────────────
 
 const MOOD_OPTIONS = [
-  { value: 'calm',      emoji: '🌿', label: 'Calm'      },
-  { value: 'good',      emoji: '✨', label: 'Good'      },
-  { value: 'flat',      emoji: '😶', label: 'Flat'      },
+  { value: 'calm', emoji: '🌿', label: 'Calm' },
+  { value: 'good', emoji: '✨', label: 'Good' },
+  { value: 'flat', emoji: '😶', label: 'Flat' },
   { value: 'stretched', emoji: '🌊', label: 'Stretched' }
 ];
 
 const ENERGY_OPTIONS = [
-  { value: 'low',    emoji: '🌙', label: 'Low'    },
+  { value: 'low', emoji: '🌙', label: 'Low' },
   { value: 'medium', emoji: '☀️', label: 'Medium' },
-  { value: 'high',   emoji: '⚡', label: 'High'   }
+  { value: 'high', emoji: '⚡', label: 'High' }
 ];
 
 function renderQuickCheckin(mood, energy) {
@@ -223,12 +224,12 @@ function renderPriorityActions(recommendations, state) {
       <div class="mt-4">
         ${recommendations.map(rec => `
           <button
-  type="button"
-  class="priority-action"
-  data-rec-route="${rec.route || ''}"
-  data-rec-target="${rec.targetId || ''}"
-  aria-label="${rec.title}"
->
+            type="button"
+            class="priority-action"
+            data-rec-route="${rec.route || ''}"
+            data-rec-target="${rec.targetId || ''}"
+            aria-label="${rec.title}"
+          >
             <div class="priority-action-copy">
               <p class="priority-action-title">${rec.title}</p>
               <p class="priority-action-text">${rec.message}</p>
@@ -241,7 +242,7 @@ function renderPriorityActions(recommendations, state) {
   `;
 }
 
-// ─── Nourishment card (prompts only, no tracking) ─────────────────────────────
+// ─── Nourishment card ─────────────────────────────────────────────────────────
 
 function energyEmoji(energy) {
   return { low: '🌙', medium: '☀️', high: '⚡' }[energy] || '';
@@ -359,47 +360,131 @@ function getWorkoutTileFocus(split, context, isDone) {
 
 // ─── Habits entry tile ────────────────────────────────────────────────────────
 
-function renderHabitsTile(habitsState) {
-  const todayHabits = {};
-  (habitsState?.items || []).forEach(item => {
-    todayHabits[item.id] = item.completed === true;
-  });
+function getHabitsProgressMeta(habitsState, habitsProgress) {
+  const total = habitsState?.totalCount ?? HABITS.length;
+  const doneCount = habitsState?.completedCount ?? 0;
 
+  const activeDays = habitsProgress?.activeHabitsDays ?? 0;
+  const perfectDays = habitsProgress?.activePerfectHabitDays ?? 0;
+  const perfectRate = habitsProgress?.activePerfectHabitsCompletionRate ?? 0;
+  const currentPerfectStreak = habitsProgress?.activePerfectHabitCurrentStreak ?? 0;
+  const bestPerfectStreak = habitsProgress?.activePerfectHabitBestStreak ?? 0;
+
+  let headline = '';
+  if (perfectDays === 7) {
+    headline = '7/7 perfect days — golden week.';
+  } else if (doneCount === total && total > 0) {
+    headline = 'Perfect today — keep the streak alive.';
+  } else if (currentPerfectStreak >= 3) {
+    headline = `${currentPerfectStreak}-day perfect streak — beautiful rhythm.`;
+  } else if (doneCount > 0) {
+    headline = 'Nice start today — keep building toward a perfect day.';
+  } else if (activeDays >= 4) {
+    headline = 'Strong week so far — today could become another perfect day.';
+  } else {
+    headline = 'Start small today and build toward a perfect day.';
+  }
+
+  let streakNote = '';
+  if (currentPerfectStreak > 0) {
+    if (currentPerfectStreak < bestPerfectStreak) {
+      const remaining = bestPerfectStreak - currentPerfectStreak;
+      streakNote = `Perfect streak: ${currentPerfectStreak} day${currentPerfectStreak === 1 ? '' : 's'} · ${remaining} more to beat your best`;
+    } else if (currentPerfectStreak === bestPerfectStreak && bestPerfectStreak > 0) {
+      streakNote = `Perfect streak: ${currentPerfectStreak} day${currentPerfectStreak === 1 ? '' : 's'} · Matching your best`;
+    } else {
+      streakNote = `Perfect streak: ${currentPerfectStreak} day${currentPerfectStreak === 1 ? '' : 's'} · New best`;
+    }
+  } else if (bestPerfectStreak > 0) {
+    streakNote = `Best perfect streak: ${bestPerfectStreak} day${bestPerfectStreak === 1 ? '' : 's'}`;
+  }
+
+  const stats = [
+    `${activeDays}/7 active days`,
+    `${perfectDays}/7 perfect days this week`
+  ];
+
+  return {
+    headline,
+    stats,
+    streakNote,
+    perfectDays,
+    perfectRate
+  };
+}
+
+function renderHabitsTile(habitsState, habitsProgress) {
   const doneCount = habitsState?.completedCount ?? 0;
   const total = habitsState?.totalCount ?? HABITS.length;
   const allDone = total > 0 && doneCount === total;
-  const circ = 87.96;
-  const filled = total > 0 ? (doneCount / total) * circ : 0;
+
+  const progressMeta = getHabitsProgressMeta(habitsState, habitsProgress);
+  const perfectProgress = progressMeta.perfectDays / 7;
+
+  const innerCirc = 87.96;
+  const innerFilled = total > 0 ? (doneCount / total) * innerCirc : 0;
+
+  const tileClasses = [
+    'habits-entry-tile',
+    progressMeta.perfectDays === 7 ? 'habits-entry-tile--gold' : ''
+  ].join(' ');
 
   return `
-    <button class="habits-entry-tile" id="habitsTileBtn" aria-label="Open habits tracker">
+    <button 
+      class="${tileClasses}" 
+      id="habitsTileBtn" 
+      aria-label="Open habits tracker"
+      style="--perfect-progress:${perfectProgress}"
+    >
       <div class="habits-tile-top">
         <div>
           <p class="habits-tile-eyebrow">Daily habits</p>
           <p class="habits-tile-count">${doneCount} <span>of ${total}</span></p>
         </div>
+
         <div class="habits-tile-right">
           <div class="habits-tile-ring">
             <svg width="42" height="42" viewBox="0 0 36 36" class="habits-ring-svg">
               <circle class="habits-ring-bg" cx="18" cy="18" r="14" fill="none"/>
-              <circle class="habits-ring-fill" cx="18" cy="18" r="14" fill="none"
+              <circle
+                class="habits-ring-fill"
+                cx="18"
+                cy="18"
+                r="14"
+                fill="none"
                 stroke="${allDone ? '#5a7a5a' : 'var(--color-ink-2)'}"
-                stroke-dasharray="${filled.toFixed(2)} ${circ.toFixed(2)}"
-                stroke-dashoffset="0"/>
+                stroke-dasharray="${innerFilled.toFixed(2)} ${innerCirc.toFixed(2)}"
+                stroke-dashoffset="0"
+              />
             </svg>
+
             ${allDone
               ? '<span class="habits-ring-check">✓</span>'
               : `<span class="habits-ring-pct">${Math.round((doneCount / total) * 100)}%</span>`}
           </div>
+
           <span class="workout-tile-arrow">→</span>
         </div>
       </div>
+
       <div class="habits-tile-preview">
-        ${(habitsState?.items || []).slice(0, 5).map(h => {
+        ${(habitsState?.items || []).slice(0, 8).map(h => {
           const done = h.completed === true;
           return `<span class="habits-preview-dot${done ? ' habits-preview-dot--done' : ''}" aria-hidden="true">${h.emoji}</span>`;
         }).join('')}
-        ${total > 5 ? `<span class="habits-preview-more">+${total - 5}</span>` : ''}
+        ${total > 8 ? `<span class="habits-preview-more">+${total - 8}</span>` : ''}
+      </div>
+
+      <div class="habits-tile-progress">
+        <p class="habits-tile-note">${progressMeta.headline}</p>
+
+        <div class="habits-tile-stats">
+          ${progressMeta.stats.map(stat => `<span class="habits-tile-stat">${stat}</span>`).join('')}
+        </div>
+
+        ${progressMeta.streakNote
+          ? `<p class="habits-tile-streak-note">${progressMeta.streakNote}</p>`
+          : ''}
       </div>
     </button>
   `;
@@ -422,7 +507,7 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-function renderView(user, state, returnMsg, weather, recommendations) {
+function renderView(user, state, returnMsg, weather, recommendations, weekSummary) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -451,7 +536,7 @@ function renderView(user, state, returnMsg, weather, recommendations) {
 
         <div class="card-stack">
           ${renderWorkoutTile(state.workout, state)}
-          ${renderHabitsTile(state.habits)}
+          ${renderHabitsTile(state.habits, weekSummary)}
           ${renderNourishmentCard(state.wellness.energy || '')}
         </div>
 
@@ -468,9 +553,10 @@ export const TodayView = {
   async init(container, user) {
     container.innerHTML = '<div class="loading-state"><p>Loading your dashboard…</p></div>';
 
-    const [state, weather] = await Promise.all([
+    const [state, weather, weekSummary] = await Promise.all([
       getDailyState(user.uid),
-      fetchWeather().catch(() => null)
+      fetchWeather().catch(() => null),
+      getWeekSummary(user.uid).catch(() => null)
     ]);
 
     touchLastActive(user.uid);
@@ -479,41 +565,45 @@ export const TodayView = {
 
     const viewState = {
       ...state,
-      wellness: { ...state.wellness }
+      wellness: { ...state.wellness },
+      habits: { ...state.habits }
     };
+
+    let habitsWeekSummary = weekSummary;
 
     function getRecommendations() {
       return getTodayRecommendations(viewState);
     }
 
-    container.innerHTML = renderView(user, viewState, returnMsg, weather, getRecommendations());
+    container.innerHTML = renderView(user, viewState, returnMsg, weather, getRecommendations(), habitsWeekSummary);
 
     const wellnessState = viewState.wellness;
+    let habitsRefreshSeq = 0;
 
-function bindPriorityActions() {
-  document.querySelectorAll('.priority-action').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const route = btn.dataset.recRoute;
-      const targetId = btn.dataset.recTarget;
+    function bindPriorityActions() {
+      document.querySelectorAll('.priority-action').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const route = btn.dataset.recRoute;
+          const targetId = btn.dataset.recTarget;
 
-      if (targetId) {
-        const target = document.getElementById(targetId);
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          if (targetId) {
+            const target = document.getElementById(targetId);
+            if (target) {
+              target.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-          target.classList.add('today-target-pulse');
-          setTimeout(() => target.classList.remove('today-target-pulse'), 1200);
-        }
-        return;
-      }
+              target.classList.add('today-target-pulse');
+              setTimeout(() => target.classList.remove('today-target-pulse'), 1200);
+            }
+            return;
+          }
 
-      if (route) {
-        const cleaned = route.replace(/^#\//, '').replace(/^#/, '');
-        if (cleaned) navigateTo(cleaned);
-      }
-    });
-  });
-}
+          if (route) {
+            const cleaned = route.replace(/^#\//, '').replace(/^#/, '');
+            if (cleaned) navigateTo(cleaned);
+          }
+        });
+      });
+    }
 
     function bindStaticTiles() {
       document.getElementById('workoutTileBtn')?.addEventListener('click', () => {
@@ -565,10 +655,23 @@ function bindPriorityActions() {
       }
     }
 
+    function rebuildHabitsTile() {
+      const tile = document.getElementById('habitsTileBtn');
+      if (!tile) return;
+
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderHabitsTile(viewState.habits, habitsWeekSummary);
+      const next = fresh.firstElementChild;
+
+      if (next) {
+        tile.replaceWith(next);
+        bindStaticTiles();
+      }
+    }
+
     function rebuildNourishmentCard() {
       const card = document.getElementById('nourishmentCard');
       if (!card) return;
-
       const fresh = document.createElement('div');
       fresh.innerHTML = renderNourishmentCard(wellnessState.energy);
       card.replaceWith(fresh.firstElementChild);
@@ -580,13 +683,34 @@ function bindPriorityActions() {
       summary.textContent = getTodaySummary(viewState);
     }
 
+    async function refreshHabitsStateFromSource() {
+      const seq = ++habitsRefreshSeq;
+
+      try {
+        const freshState = await getDailyState(user.uid);
+        const freshWeekSummary = await getWeekSummary(user.uid);
+
+        if (seq !== habitsRefreshSeq) return;
+
+        viewState.habits = freshState.habits;
+        habitsWeekSummary = freshWeekSummary;
+
+        rebuildHabitsTile();
+        rebuildSummary();
+        rebuildPriorityActions();
+      } catch {
+        // fail silently for cross-view refresh
+      }
+    }
+
     function refreshTodayUI(options = {}) {
       const {
         qci = true,
         summary = true,
         priorityActions = true,
         nourishment = true,
-        workout = true
+        workout = true,
+        habits = true
       } = options;
 
       if (qci) rebuildQci();
@@ -594,6 +718,7 @@ function bindPriorityActions() {
       if (priorityActions) rebuildPriorityActions();
       if (nourishment) rebuildNourishmentCard();
       if (workout) rebuildWorkoutTile();
+      if (habits) rebuildHabitsTile();
     }
 
     function showQciTick() {
@@ -652,9 +777,18 @@ function bindPriorityActions() {
           summary: true,
           priorityActions: true,
           nourishment: true,
-          workout: true
+          workout: true,
+          habits: true
         });
       });
+    }
+
+    function handleHabitsUpdated(event) {
+      const detail = event?.detail || {};
+
+      if (detail.source === 'today-view') return;
+
+      refreshHabitsStateFromSource();
     }
 
     document.getElementById('returnCardDismiss')?.addEventListener('click', () => {
@@ -666,9 +800,15 @@ function bindPriorityActions() {
       }
     });
 
+    window.addEventListener('grounded:habits-updated', handleHabitsUpdated);
+
     bindPriorityActions();
     bindStaticTiles();
     bindQci();
+
+    container._groundedCleanup = () => {
+      window.removeEventListener('grounded:habits-updated', handleHabitsUpdated);
+    };
   }
 };
 

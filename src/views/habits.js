@@ -1,4 +1,4 @@
-import { HABITS, getHabits, getAllHabits, getHabitLog, getHabitLogsRange, toggleHabit, computeStreaks, buildCalendarDays, getNWeeksAgoKey, createHabit, updateHabitActive } from '../services/habits.js';
+import { HABITS, getHabits, getAllHabits, getHabitLog, getHabitLogsRange, toggleHabit, computeStreaks, buildCalendarDays, getNWeeksAgoKey, createHabit, updateHabitActive, updateHabit, updateHabitOrder } from '../services/habits.js';
 import { getTodayKey, showToast } from '../utils.js';
 import { navigateTo } from '../router.js';
 
@@ -16,26 +16,42 @@ function formatShortDate(dateKey) {
 
 function getFillClass(pct, isFuture) {
   if (isFuture) return 'cal-dot--future';
-  if (pct === 1)  return 'cal-dot--full';
+  if (pct === 1) return 'cal-dot--full';
   if (pct >= 0.7) return 'cal-dot--most';
   if (pct >= 0.4) return 'cal-dot--mid';
-  if (pct > 0)    return 'cal-dot--low';
+  if (pct > 0) return 'cal-dot--low';
   return 'cal-dot--empty';
 }
 
 function getDayDoneCount(logsMap, dateKey, habitDefs) {
   const habits = logsMap[dateKey] || {};
-  return habitDefs.filter(h => habits[h.id] === true).length;
+  return habitDefs.filter(h => isHabitDone(habits, h.id)).length;
 }
 
-// Returns habits sorted by streak descending
 function getSortedByStreak(streaks, habitDefs) {
   return [...habitDefs].sort((a, b) => (streaks[b.id] || 0) - (streaks[a.id] || 0));
 }
 
-// Normalise a label for duplicate comparison — lowercase, collapse whitespace
 function normalisedLabel(label) {
   return label.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isHabitDone(habits, habitId) {
+  const val = habits[habitId];
+  if (val === true) return true;
+  if (typeof val === 'object' && val !== null) {
+    return val.completed === true;
+  }
+  return false;
+}
+
+function emitHabitsUpdated(detail = {}) {
+  window.dispatchEvent(new CustomEvent('grounded:habits-updated', {
+    detail: {
+      source: 'habits-view',
+      ...detail
+    }
+  }));
 }
 
 // ─── Render: habit toggle pills ───────────────────────────────────────────────
@@ -63,7 +79,7 @@ function renderHabitPills(habits, activeDate, isToday, habitDefs) {
       </div>
       <div class="habits-pills-list">
         ${habitDefs.map(h => {
-          const done = habits[h.id] === true;
+          const done = isHabitDone(habits, h.id);
           return `
             <button
               class="habit-pill${done ? ' habit-pill--done' : ''}"
@@ -135,8 +151,8 @@ function renderCalendar(calendarDays, logsMap, activeDate, habitDefs) {
 
 function renderStreaks(streaks, habitDefs) {
   const sorted = getSortedByStreak(streaks, habitDefs);
-  const top3   = sorted.slice(0, 3);
-  const rest   = sorted.slice(3);
+  const top3 = sorted.slice(0, 3);
+  const rest = sorted.slice(3);
   const hasRest = rest.length > 0;
 
   function streakRow(h) {
@@ -175,15 +191,70 @@ function renderStreaks(streaks, habitDefs) {
 
 // ─── Render: edit mode ────────────────────────────────────────────────────────
 
-function renderEditSection(allHabits) {
-  const activeHabits   = allHabits.filter(h => h.active);
+function renderEditSection(allHabits, editingHabitId = null) {
+  const activeHabits = allHabits.filter(h => h.active);
   const inactiveHabits = allHabits.filter(h => !h.active);
 
   function editRow(h) {
+    const isEditingRow = editingHabitId === h.id;
+
+    if (isEditingRow) {
+      return `
+        <div class="habits-edit-row habits-edit-row--editing${!h.active ? ' habits-edit-row--inactive' : ''}" data-edit-id="${h.id}">
+          <input
+            type="text"
+            class="habits-inline-emoji-input"
+            data-edit-emoji-id="${h.id}"
+            value="${h.emoji || ''}"
+            maxlength="4"
+            aria-label="Edit emoji for ${h.label}"
+            autocomplete="off"
+          />
+          <input
+            type="text"
+            class="habits-inline-label-input"
+            data-edit-label-id="${h.id}"
+            value="${h.label || ''}"
+            maxlength="40"
+            aria-label="Edit name for ${h.label}"
+            autocomplete="off"
+          />
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn-primary" data-save-edit-id="${h.id}" aria-label="Save changes to ${h.label}">
+              Save
+            </button>
+            <button class="habits-back-btn" data-cancel-edit-id="${h.id}" aria-label="Cancel editing ${h.label}">
+              Cancel
+            </button>
+            <label class="habits-toggle-switch" aria-label="${h.active ? 'Deactivate' : 'Activate'} ${h.label}">
+              <input
+                type="checkbox"
+                class="habits-toggle-input"
+                data-toggle-id="${h.id}"
+                ${h.active ? 'checked' : ''}
+              />
+              <span class="habits-toggle-track"></span>
+            </label>
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <div class="habits-edit-row${!h.active ? ' habits-edit-row--inactive' : ''}" data-edit-id="${h.id}">
-        <span class="habits-edit-emoji">${h.emoji}</span>
-        <span class="habits-edit-label">${h.label}</span>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button type="button" class="habits-reorder-btn" data-move-up="${h.id}" aria-label="Move ${h.label} up">↑</button>
+          <button type="button" class="habits-reorder-btn" data-move-down="${h.id}" aria-label="Move ${h.label} down">↓</button>
+        </div>
+        <button
+          class="habits-edit-main"
+          type="button"
+          data-start-edit-id="${h.id}"
+          aria-label="Edit ${h.label}"
+        >
+          <span class="habits-edit-emoji">${h.emoji}</span>
+          <span class="habits-edit-label">${h.label}</span>
+        </button>
         <label class="habits-toggle-switch" aria-label="${h.active ? 'Deactivate' : 'Activate'} ${h.label}">
           <input
             type="checkbox"
@@ -200,7 +271,7 @@ function renderEditSection(allHabits) {
   return `
     <div class="habits-edit-section" id="habitsEditSection">
       <div class="habits-edit-hint">
-        <p class="habits-edit-hint-text">Toggle habits on or off. Active habits appear on your daily log.</p>
+        <p class="habits-edit-hint-text">Tap a habit to edit its name or emoji. Toggle habits on or off to control what appears on your daily log.</p>
       </div>
 
       <div class="habits-edit-list" id="habitsEditList">
@@ -244,7 +315,7 @@ function renderEditSection(allHabits) {
 
 // ─── Full view ────────────────────────────────────────────────────────────────
 
-function renderView(habits, logsMap, streaks, calendarDays, activeDate, todayKey, habitDefs, isEditing, allHabits) {
+function renderView(habits, logsMap, streaks, calendarDays, activeDate, todayKey, habitDefs, isEditing, allHabits, editingHabitId) {
   return `
     <main class="view-scroll">
       <div class="view-inner">
@@ -271,7 +342,7 @@ function renderView(habits, logsMap, streaks, calendarDays, activeDate, todayKey
         </header>
 
         ${isEditing
-          ? renderEditSection(allHabits)
+          ? renderEditSection(allHabits, editingHabitId)
           : `
             ${renderHabitPills(habits, activeDate, activeDate === todayKey, habitDefs)}
             ${habitDefs.length > 0 ? renderCalendar(calendarDays, logsMap, activeDate, habitDefs) : ''}
@@ -348,7 +419,7 @@ function rebuildStreaksSection(streaks, habitDefs) {
 // ─── Streaks toggle ───────────────────────────────────────────────────────────
 
 function bindStreaksToggle() {
-  const btn  = document.getElementById('streaksToggleBtn');
+  const btn = document.getElementById('streaksToggleBtn');
   const rest = document.getElementById('streaksRest');
   if (!btn || !rest) return;
 
@@ -382,25 +453,34 @@ export const HabitsView = {
       getHabitLogsRange(user.uid, startKey, todayKey)
     ]);
 
-    // Resolve habit definitions: Firestore habits take precedence, fallback to hardcoded
-    let habitDefs = firestoreHabits.length > 0 ? firestoreHabits : HABITS;
+    let habitDefs = firestoreHabits.length > 0
+      ? firestoreHabits
+      : [];
 
-    // allHabits is used in edit mode (includes inactive)
     let allHabits = allFirestoreHabits.length > 0 ? allFirestoreHabits : HABITS.map(h => ({ ...h, active: true }));
 
     logsMap[todayKey] = { ...todayHabits };
 
-    let activeDate    = todayKey;
-    let activeHabits  = { ...todayHabits };
-    let currentLogs   = { ...logsMap };
+    let activeDate = todayKey;
+    let activeHabits = { ...todayHabits };
+    let currentLogs = { ...logsMap };
     let currentStreaks = computeStreaks(currentLogs, todayKey, habitDefs);
-    const calDays     = buildCalendarDays(todayKey);
-    let isEditing     = false;
+    const calDays = buildCalendarDays(todayKey);
+    let isEditing = false;
+    let editingHabitId = null;
 
     function renderAndBind() {
       container.innerHTML = renderView(
-        activeHabits, currentLogs, currentStreaks, calDays,
-        activeDate, todayKey, habitDefs, isEditing, allHabits
+        activeHabits,
+        currentLogs,
+        currentStreaks,
+        calDays,
+        activeDate,
+        todayKey,
+        habitDefs,
+        isEditing,
+        allHabits,
+        editingHabitId
       );
       bindAll();
     }
@@ -414,6 +494,7 @@ export const HabitsView = {
 
       document.getElementById('habitsEditToggleBtn')?.addEventListener('click', () => {
         isEditing = !isEditing;
+        editingHabitId = null;
         renderAndBind();
       });
 
@@ -426,7 +507,23 @@ export const HabitsView = {
       }
     }
 
-    // ─── Bind: toggle + add in edit mode ──────────────────────────────────────
+    function bindReorderButtons() {
+      document.querySelectorAll('[data-move-up]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          moveHabit(btn.dataset.moveUp, -1);
+        });
+      });
+
+      document.querySelectorAll('[data-move-down]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          moveHabit(btn.dataset.moveDown, 1);
+        });
+      });
+    }
 
     function bindToggleInputs() {
       document.querySelectorAll('[data-toggle-id]').forEach(input => {
@@ -434,24 +531,26 @@ export const HabitsView = {
           const habitId = input.dataset.toggleId;
           const active = input.checked;
 
-          // Optimistic UI — dim the row immediately
           const row = document.querySelector(`[data-edit-id="${habitId}"]`);
           if (row) row.style.opacity = active ? '1' : '0.45';
 
           try {
             await updateHabitActive(user.uid, habitId, active);
 
-            // Update local state
             allHabits = allHabits.map(h =>
               h.id === habitId ? { ...h, active } : h
             );
             habitDefs = allHabits.filter(h => h.active);
             currentStreaks = computeStreaks(currentLogs, todayKey, habitDefs);
 
-            // Rebuild the edit list to re-sort active/inactive groups
             rebuildEditList();
+
+            emitHabitsUpdated({
+              type: 'definition-active-changed',
+              habitId,
+              active
+            });
           } catch {
-            // Revert on failure
             input.checked = !active;
             if (row) row.style.opacity = '';
             showToast('Save failed — try again', 'error');
@@ -460,26 +559,188 @@ export const HabitsView = {
       });
     }
 
+    function bindStartEditButtons() {
+      document.querySelectorAll('[data-start-edit-id]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          editingHabitId = btn.dataset.startEditId;
+          rebuildEditList();
+        });
+      });
+    }
+
+    function bindCancelEditButtons() {
+      document.querySelectorAll('[data-cancel-edit-id]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          editingHabitId = null;
+          rebuildEditList();
+        });
+      });
+    }
+
+    function bindSaveEditButtons() {
+      document.querySelectorAll('[data-save-edit-id]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const habitId = btn.dataset.saveEditId;
+          const labelInput = document.querySelector(`[data-edit-label-id="${habitId}"]`);
+          const emojiInput = document.querySelector(`[data-edit-emoji-id="${habitId}"]`);
+
+          const newLabel = labelInput?.value?.trim() || '';
+          const newEmoji = emojiInput?.value?.trim() || '⭐';
+
+          if (!newLabel) {
+            showToast('Please enter a habit name', 'error');
+            labelInput?.focus();
+            return;
+          }
+
+          const normalised = normalisedLabel(newLabel);
+          const isDuplicate = allHabits.some(h =>
+            h.id !== habitId && normalisedLabel(h.label) === normalised
+          );
+
+          if (isDuplicate) {
+            showToast('You already have a habit with that name', 'error');
+            labelInput?.select();
+            return;
+          }
+
+          btn.disabled = true;
+
+          try {
+            await updateHabit(user.uid, habitId, {
+              label: newLabel,
+              emoji: newEmoji
+            });
+
+            allHabits = allHabits.map(h =>
+              h.id === habitId
+                ? { ...h, label: newLabel, emoji: newEmoji }
+                : h
+            );
+
+            habitDefs = allHabits.filter(h => h.active);
+            currentStreaks = computeStreaks(currentLogs, todayKey, habitDefs);
+            editingHabitId = null;
+
+            rebuildEditList();
+            showToast('Habit updated', 'success');
+
+            emitHabitsUpdated({
+              type: 'definition-updated',
+              habitId
+            });
+          } catch {
+            showToast('Could not update habit — try again', 'error');
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
+    function bindInlineEditInputs() {
+      document.querySelectorAll('[data-edit-label-id]').forEach(input => {
+        input.addEventListener('keydown', e => {
+          const habitId = input.dataset.editLabelId;
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            document.querySelector(`[data-save-edit-id="${habitId}"]`)?.click();
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            editingHabitId = null;
+            rebuildEditList();
+          }
+        });
+      });
+
+      document.querySelectorAll('[data-edit-emoji-id]').forEach(input => {
+        input.addEventListener('keydown', e => {
+          const habitId = input.dataset.editEmojiId;
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            document.querySelector(`[data-save-edit-id="${habitId}"]`)?.click();
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            editingHabitId = null;
+            rebuildEditList();
+          }
+        });
+      });
+    }
+
+    async function moveHabit(habitId, direction) {
+      const index = allHabits.findIndex(h => h.id === habitId);
+      if (index === -1) return;
+
+      const newIndex = index + direction;
+      if (newIndex < 0 || newIndex >= allHabits.length) return;
+
+      const updated = [...allHabits];
+      [updated[index], updated[newIndex]] = [updated[newIndex], updated[index]];
+
+      const updatedWithOrder = updated.map((h, i) => ({
+        ...h,
+        sortOrder: i
+      }));
+
+      const updates = updatedWithOrder.map(h => ({
+        id: h.id,
+        sortOrder: h.sortOrder
+      }));
+
+      allHabits = updatedWithOrder;
+      habitDefs = allHabits.filter(h => h.active);
+
+      rebuildEditList();
+
+      try {
+        await updateHabitOrder(user.uid, updates);
+
+        emitHabitsUpdated({
+          type: 'definition-reordered'
+        });
+      } catch {
+        showToast('Reorder failed — try again', 'error');
+      }
+    }
+
     function rebuildEditList() {
       const listEl = document.getElementById('habitsEditList');
       if (!listEl) return;
 
       const fresh = document.createElement('div');
-      fresh.innerHTML = renderEditSection(allHabits);
+      fresh.innerHTML = renderEditSection(allHabits, editingHabitId);
       const newList = fresh.querySelector('#habitsEditList');
+
       if (newList) {
         listEl.replaceWith(newList);
         bindToggleInputs();
+        bindStartEditButtons();
+        bindCancelEditButtons();
+        bindSaveEditButtons();
+        bindInlineEditInputs();
+        bindReorderButtons();
+
+        if (editingHabitId) {
+          setTimeout(() => {
+            document.querySelector(`[data-edit-label-id="${editingHabitId}"]`)?.focus();
+          }, 0);
+        }
       }
     }
 
     function bindEditEvents() {
       bindToggleInputs();
+      bindStartEditButtons();
+      bindCancelEditButtons();
+      bindSaveEditButtons();
+      bindInlineEditInputs();
+      bindReorderButtons();
 
-      // Add new habit
       document.getElementById('habitsAddBtn')?.addEventListener('click', handleAddHabit);
 
-      // Allow Enter to submit from label input
       document.getElementById('habitLabelInput')?.addEventListener('keydown', e => {
         if (e.key === 'Enter') {
           e.preventDefault();
@@ -491,20 +752,18 @@ export const HabitsView = {
     async function handleAddHabit() {
       const labelInput = document.getElementById('habitLabelInput');
       const emojiInput = document.getElementById('habitEmojiInput');
-      const errorEl    = document.getElementById('habitsAddError');
-      const btn        = document.getElementById('habitsAddBtn');
+      const errorEl = document.getElementById('habitsAddError');
+      const btn = document.getElementById('habitsAddBtn');
 
       const label = labelInput?.value?.trim() || '';
       const emoji = emojiInput?.value?.trim() || '⭐';
 
-      // Validate: blank
       if (!label) {
         showAddError(errorEl, 'Please enter a habit name.');
         labelInput?.focus();
         return;
       }
 
-      // Validate: duplicate (case-insensitive, whitespace-normalised)
       const normalised = normalisedLabel(label);
       const isDuplicate = allHabits.some(h => normalisedLabel(h.label) === normalised);
       if (isDuplicate) {
@@ -519,21 +778,22 @@ export const HabitsView = {
       try {
         const newHabit = await createHabit(user.uid, { label, emoji });
 
-        // Update local state
         allHabits = [...allHabits, newHabit];
         habitDefs = allHabits.filter(h => h.active);
         currentStreaks = computeStreaks(currentLogs, todayKey, habitDefs);
 
-        // Clear inputs and refocus name field for quick multi-add
-        if (labelInput) { labelInput.value = ''; }
-        if (emojiInput) { emojiInput.value = ''; }
+        if (labelInput) labelInput.value = '';
+        if (emojiInput) emojiInput.value = '';
 
-        // Rebuild the edit list to show the new habit
         rebuildEditList();
 
         showToast('Habit added', 'success');
 
-        // Refocus so the user can quickly add another
+        emitHabitsUpdated({
+          type: 'definition-created',
+          habitId: newHabit.id
+        });
+
         setTimeout(() => labelInput?.focus(), 50);
       } catch {
         showToast('Could not add habit — try again', 'error');
@@ -554,26 +814,39 @@ export const HabitsView = {
       errorEl.hidden = true;
     }
 
-    // ─── Bind: pill toggle ────────────────────────────────────────────────────
-
     function bindPillEvents() {
       document.querySelectorAll('[data-habit-id]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const habitId = btn.dataset.habitId;
-          const current = activeHabits[habitId] === true;
-          const newVal  = !current;
+          const current = isHabitDone(activeHabits, habitId);
+          const newVal = !current;
 
-          activeHabits[habitId] = newVal;
-          currentLogs[activeDate] = { ...(currentLogs[activeDate] || {}), [habitId]: newVal };
+          activeHabits[habitId] = {
+            completed: newVal,
+            labelSnapshot: activeHabits[habitId]?.labelSnapshot ?? null,
+            emojiSnapshot: activeHabits[habitId]?.emojiSnapshot ?? null
+          };
+
+          const habitMeta = habitDefs.find(h => h.id === habitId);
+
+          currentLogs[activeDate] = {
+            ...(currentLogs[activeDate] || {}),
+            [habitId]: {
+              completed: newVal,
+              labelSnapshot: habitMeta?.label || null,
+              emojiSnapshot: habitMeta?.emoji || null
+            }
+          };
+
           const prevStreaks = { ...currentStreaks };
           currentStreaks = computeStreaks(currentLogs, todayKey, habitDefs);
 
           patchPill(habitId, newVal);
           patchCalDot(activeDate, currentLogs, habitDefs);
 
-          // If streak rank order changed, rebuild streaks section; otherwise patch in place
           const rankChanged = getSortedByStreak(currentStreaks, habitDefs).map(h => h.id).join()
             !== getSortedByStreak(prevStreaks, habitDefs).map(h => h.id).join();
+
           if (rankChanged) {
             rebuildStreaksSection(currentStreaks, habitDefs);
           } else {
@@ -581,10 +854,42 @@ export const HabitsView = {
           }
 
           try {
-            await toggleHabit(user.uid, activeDate, habitId, newVal);
+            await toggleHabit(
+              user.uid,
+              activeDate,
+              habitId,
+              newVal,
+              {
+                label: habitMeta?.label,
+                emoji: habitMeta?.emoji
+              }
+            );
+
+            emitHabitsUpdated({
+              type: 'log-toggled',
+              habitId,
+              dateKey: activeDate,
+              completed: newVal
+            });
           } catch {
-            activeHabits[habitId] = current;
-            currentLogs[activeDate][habitId] = current;
+            activeHabits[habitId] = current
+              ? {
+                  completed: true,
+                  labelSnapshot: habitMeta?.label || null,
+                  emojiSnapshot: habitMeta?.emoji || null
+                }
+              : {
+                  completed: false,
+                  labelSnapshot: habitMeta?.label || null,
+                  emojiSnapshot: habitMeta?.emoji || null
+                };
+
+            currentLogs[activeDate][habitId] = {
+              completed: current,
+              labelSnapshot: habitMeta?.label || null,
+              emojiSnapshot: habitMeta?.emoji || null
+            };
+
             currentStreaks = computeStreaks(currentLogs, todayKey, habitDefs);
             patchPill(habitId, current);
             patchCalDot(activeDate, currentLogs, habitDefs);
@@ -594,8 +899,6 @@ export const HabitsView = {
         });
       });
     }
-
-    // ─── Bind: calendar date selection ───────────────────────────────────────
 
     function bindCalEvents() {
       document.querySelectorAll('[data-cal-date]').forEach(btn => {

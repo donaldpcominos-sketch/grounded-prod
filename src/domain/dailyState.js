@@ -55,12 +55,18 @@ function normaliseNico(data) {
 
 // habitDefinitions: the resolved list of habit definitions (Firestore or fallback)
 // habitMap: the user's completion log for today { [habitId]: boolean }
+function isHabitCompleted(value) {
+  if (value === true) return true;
+  if (value && typeof value === 'object') return value.completed === true;
+  return false;
+}
+
 function normaliseHabits(habitMap, habitDefinitions) {
   const habitsById = habitMap && typeof habitMap === 'object' ? habitMap : {};
 
   const items = habitDefinitions.map(habit => ({
     ...habit,
-    completed: habitsById[habit.id] === true
+    completed: isHabitCompleted(habitsById[habit.id])
   }));
 
   const completedCount = items.filter(h => h.completed).length;
