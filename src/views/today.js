@@ -35,7 +35,12 @@ function uvBadgeClass(uv) {
   return 'weather-uv-badge';
 }
 
-function renderWeatherCard(weather) {
+// renderWeatherCard accepts hasBriefing — a boolean indicating whether a
+// valid briefing exists for this session. When true, a subtle "View briefing"
+// button is appended at the bottom of the card so the user can re-open the
+// briefing at any time, independent of whether the auto-banner is visible.
+
+function renderWeatherCard(weather, hasBriefing) {
   if (!weather) {
     return `
       <div class="weather-card" id="weatherCard">
@@ -59,6 +64,12 @@ function renderWeatherCard(weather) {
     </div>
   `).join('');
 
+  // "View briefing" — present whenever a briefing exists for this session,
+  // regardless of whether the auto-banner has been dismissed.
+  const viewBriefingBtn = hasBriefing
+    ? `<button class="weather-briefing-link" id="viewWeatherBriefingBtn" aria-label="View today&#39;s weather briefing">View briefing</button>`
+    : '';
+
   return `
     <div class="weather-card" id="weatherCard">
       <div class="weather-main">
@@ -74,6 +85,7 @@ function renderWeatherCard(weather) {
       ${walkWindow ? `<div class="weather-walk-window">${walkWindow}</div>` : ''}
       <div class="weather-forecast">${forecastHtml}</div>
       ${staleNote}
+      ${viewBriefingBtn}
     </div>
   `;
 }
@@ -101,9 +113,8 @@ function getReturnMessage(gapHours) {
 }
 
 // ─── Weather briefing banner ──────────────────────────────────────────────────
-// Rendered only when getWeatherBriefingDecision says shouldShow === true.
-// Uses a distinct ID and class from the reminder banner so both can coexist
-// without ambiguity. Only one is shown per app open per feature.
+// Used for both the automatic first-show and the manual re-open.
+// The banner is identical either way — only the trigger differs.
 
 function renderWeatherBriefingBanner(briefing) {
   if (!briefing) return '';
@@ -530,7 +541,7 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-function renderView(user, state, returnMsg, weather, recommendations, weekSummary, reminderDecision, weatherBriefing) {
+function renderView(user, state, returnMsg, weather, recommendations, weekSummary, reminderDecision, weatherBriefing, hasBriefing) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -556,7 +567,7 @@ function renderView(user, state, returnMsg, weather, recommendations, weekSummar
         ${renderWeatherBriefingBanner(weatherBriefing)}
         ${renderReminderBanner(reminderDecision)}
         ${renderPriorityActions(recommendations, state)}
-        ${renderWeatherCard(weather)}
+        ${renderWeatherCard(weather, hasBriefing)}
         ${renderQuickCheckin(state.wellness.mood || '', state.wellness.energy || '')}
 
         <div class="card-stack">
@@ -596,11 +607,17 @@ export const TodayView = {
       ? getReminderDecision(notifData.prefs, state, notifData.notifState)
       : null;
 
-    // ── Weather briefing decision ──────────────────────────────────────────
-    // Read yesterday's snapshot from localStorage (synchronous, no network).
-    // Suppressed for the session if the user already dismissed it.
-    let weatherBriefing = null;
-    if (!_weatherBriefingDismissed && notifData.prefs && notifData.notifState) {
+    // ── Weather briefing ───────────────────────────────────────────────────
+    // _sessionWeatherBriefing persists the computed briefing for the lifetime
+    // of this session so the manual re-open button can always access it,
+    // even after the auto-banner has been dismissed.
+    //
+    // It is only populated once per session (on first init after a fresh
+    // app open that passes the eligibility gates). On subsequent navigations
+    // back to Today, the auto-banner is suppressed (_weatherBriefingDismissed)
+    // but the "View briefing" button in the weather card still works because
+    // _sessionWeatherBriefing is still set.
+    if (!_sessionWeatherBriefing && notifData.prefs && notifData.notifState) {
       const briefingDecision = getWeatherBriefingDecision(
         notifData.prefs,
         notifData.notifState,
@@ -610,14 +627,21 @@ export const TodayView = {
       if (briefingDecision.shouldShow) {
         const yesterday  = getYesterdaySnapshot();
         const comparison = compareWeather(weather, yesterday);
-        weatherBriefing  = buildWeatherBriefingMessage(comparison, weather);
-        // Record immediately after building so it does not reappear today
-        // even if the user dismisses and reopens the app.
-        if (weatherBriefing) {
+        const built      = buildWeatherBriefingMessage(comparison, weather);
+        if (built) {
+          _sessionWeatherBriefing = built;
+          // Record immediately so it does not auto-show again today,
+          // even if the user dismisses and reopens the app.
           recordWeatherBriefingSent(user.uid).catch(() => {});
         }
       }
     }
+
+    // The auto-banner renders only on the first eligible open this session.
+    // Once _weatherBriefingDismissed is true, it is suppressed — but the
+    // weather card's "View briefing" button remains available via
+    // _sessionWeatherBriefing.
+    const autoShowBriefing = !_weatherBriefingDismissed ? _sessionWeatherBriefing : null;
 
     const returnMsg = _returnDismissed ? null : getReturnMessage(state.lastSeen?.gapHours ?? 0);
 
@@ -641,7 +665,8 @@ export const TodayView = {
       getRecommendations(),
       habitsWeekSummary,
       reminderDecision,
-      weatherBriefing,
+      autoShowBriefing,
+      !!_sessionWeatherBriefing,
     );
 
     // Record the reminder as sent immediately after rendering.
@@ -700,6 +725,11 @@ export const TodayView = {
       });
     }
 
+    // ── Weather briefing banner bindings ─────────────────────────────────────
+    // bindWeatherBriefingBanner handles both the auto-shown banner and any
+    // banner re-injected by the manual "View briefing" button. It is called
+    // once on init and again each time a banner is re-inserted into the DOM.
+
     function bindWeatherBriefingBanner() {
       document.getElementById('weatherBriefingBannerDismiss')?.addEventListener('click', () => {
         const banner = document.getElementById('weatherBriefingBanner');
@@ -707,6 +737,44 @@ export const TodayView = {
         _weatherBriefingDismissed = true;
         banner.classList.add('reminder-banner--dismissing');
         setTimeout(() => banner.remove(), 300);
+      });
+    }
+
+    // ── "View briefing" button in the weather card ───────────────────────────
+    // Injects the briefing banner above the weather card when clicked.
+    // Does not touch notification state — this is a pure UI action.
+    // If a banner is already visible, scrolls to it instead of adding another.
+
+    function bindViewBriefingButton() {
+      document.getElementById('viewWeatherBriefingBtn')?.addEventListener('click', () => {
+        if (!_sessionWeatherBriefing) return;
+
+        // If the banner is already in the DOM, scroll to it and pulse.
+        const existing = document.getElementById('weatherBriefingBanner');
+        if (existing) {
+          existing.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          existing.classList.add('reminder-banner--dismissing'); // reuse animation class for a pulse
+          setTimeout(() => existing.classList.remove('reminder-banner--dismissing'), 300);
+          return;
+        }
+
+        // Re-inject the banner immediately before the weather card.
+        const weatherCard = document.getElementById('weatherCard');
+        if (!weatherCard) return;
+
+        const node = document.createElement('div');
+        node.innerHTML = renderWeatherBriefingBanner(_sessionWeatherBriefing);
+        const banner = node.firstElementChild;
+        if (!banner) return;
+
+        // Clear the dismissed flag so the user can dismiss the re-opened banner.
+        _weatherBriefingDismissed = false;
+
+        weatherCard.insertAdjacentElement('beforebegin', banner);
+        banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+        // Bind the dismiss button on the freshly inserted banner.
+        bindWeatherBriefingBanner();
       });
     }
 
@@ -919,6 +987,7 @@ export const TodayView = {
     bindQci();
     bindReminderBanner();
     bindWeatherBriefingBanner();
+    bindViewBriefingButton();
 
     container._groundedCleanup = () => {
       window.removeEventListener('grounded:habits-updated', handleHabitsUpdated);
@@ -932,3 +1001,10 @@ export const TodayView = {
 let _returnDismissed          = false;
 let _reminderDismissed        = false;
 let _weatherBriefingDismissed = false;
+
+// Holds the computed briefing object for the entire session.
+// Populated once on the first eligible app open; never cleared.
+// Allows the "View briefing" button to function even after the auto-banner
+// has been dismissed, and across navigations back to Today.
+// Notification state is never touched by manual re-opens.
+let _sessionWeatherBriefing = null;
