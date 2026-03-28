@@ -45,18 +45,34 @@ function renderRecommendations(books) {
   `;
 }
 
+function formatTimeAgo(ts) {
+  if (!ts) return '';
+
+  const diff = Date.now() - ts;
+
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hr ago`;
+
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 function renderAIRecommendations(aiState) {
-  if (!aiState?.hasRequested) {
+  if (aiState.error) {
     return `
       <div class="books-recommendations">
         <p class="books-recommendations-heading">Suggested for you</p>
         <div class="books-recommendation-list">
           <div class="books-recommendation-item">
-            <p class="books-recommendation-text">Get tailored suggestions based on what you've finished reading.</p>
+            <p class="books-recommendation-text">${aiState.error}</p>
           </div>
         </div>
         <div class="books-add-row">
-          <button class="books-add-btn" id="loadBookRecommendationsBtn">Recommend a Book</button>
+          <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">✨ Try Again</button>
         </div>
       </div>
     `;
@@ -75,38 +91,34 @@ function renderAIRecommendations(aiState) {
     `;
   }
 
-  if (aiState.error) {
-    return `
-      <div class="books-recommendations">
-        <p class="books-recommendations-heading">Suggested for you</p>
-        <div class="books-recommendation-list">
-          <div class="books-recommendation-item">
-            <p class="books-recommendation-text">Unable to load recommendations right now.</p>
-          </div>
-        </div>
-        <div class="books-add-row">
-          <button class="books-add-btn" id="loadBookRecommendationsBtn">Try Again</button>
-        </div>
-      </div>
-    `;
-  }
-
   const signals = Array.isArray(aiState?.data?.signals) ? aiState.data.signals : [];
   const recommendations = Array.isArray(aiState?.data?.recommendations)
     ? aiState.data.recommendations
     : [];
+  const meta = aiState?.data?._meta || null;
+
+  const metaLabel = meta?.createdAt
+    ? (meta.source === 'cache'
+        ? `Updated ${formatTimeAgo(meta.createdAt)}`
+        : 'Just generated')
+    : '';
+
+  const metaHtml = metaLabel
+    ? `<p class="books-recommendations-meta">${metaLabel}</p>`
+    : '';
 
   if (signals.length === 0 && recommendations.length === 0) {
     return `
       <div class="books-recommendations">
         <p class="books-recommendations-heading">Suggested for you</p>
+        ${metaHtml}
         <div class="books-recommendation-list">
           <div class="books-recommendation-item">
             <p class="books-recommendation-text">Not enough reading history yet to suggest something meaningful.</p>
           </div>
         </div>
         <div class="books-add-row">
-          <button class="books-add-btn" id="loadBookRecommendationsBtn">Try Again</button>
+          <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">✨ Try Again</button>
         </div>
       </div>
     `;
@@ -128,190 +140,19 @@ function renderAIRecommendations(aiState) {
   return `
     <div class="books-recommendations">
       <p class="books-recommendations-heading">Suggested for you</p>
+      ${metaHtml}
       <div class="books-recommendation-list">
         ${signalItems}
         ${recommendationItems}
       </div>
       <div class="books-add-row">
-        <button class="books-add-btn" id="loadBookRecommendationsBtn">Refresh Suggestions</button>
+        <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">✨ Refresh Suggestions</button>
       </div>
     </div>
   `;
 }
 
-// ─── renderAIRecommendations ──────────────────────────────────────────────────
 
-export async function handler(event) {
-  try {
-    const body = JSON.parse(event.body || '{}');
-    const books = Array.isArray(body.books) ? body.books : [];
-
-    const finishedBooks = books
-      .filter(book => book && book.status === 'finished')
-      .slice(0, 8)
-      .map(book => ({
-        title: book.title || '',
-        author: book.author || '',
-        rating: book.rating ?? null,
-        notes: (book.notes || '').slice(0, 200),
-      }));
-
-    if (finishedBooks.length === 0) {
-      return {
-        statusCode: 200,
-        body: JSON.stringify({
-          signals: [],
-          recommendations: [],
-        }),
-      };
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          error: 'Missing GEMINI_API_KEY',
-        }),
-      };
-    }
-
-    const prompt = `
-Return valid JSON only.
-
-Shape:
-{
-  "signals": ["...", "..."],
-  "recommendations": [
-    {
-      "title": "...",
-      "author": "...",
-      "reason": "..."
-    }
-  ]
-}
-
-Rules:
-- Max 2 signals
-- Max 2 recommendations
-- Each signal must be short
-- Each reason must be short
-- No markdown
-- No code fences
-- No text outside JSON
-
-Finished books:
-${JSON.stringify(finishedBooks)}
-`.trim();
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: prompt,
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.3,
-            topP: 0.8,
-            maxOutputTokens: 1200,
-            responseMimeType: 'application/json',
-          },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          error: 'Gemini request failed',
-          details: errorText,
-        }),
-      };
-    }
-
-    const data = await response.json();
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const finishReason = data?.candidates?.[0]?.finishReason || '';
-
-    if (!rawText) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          error: 'Gemini returned empty content',
-          finishReason,
-        }),
-      };
-    }
-
-    if (finishReason === 'MAX_TOKENS') {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          error: 'Gemini response was truncated',
-          finishReason,
-          raw: rawText,
-        }),
-      };
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch (error) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          error: 'Gemini returned invalid JSON',
-          finishReason,
-          raw: rawText,
-          details: error.message,
-        }),
-      };
-    }
-
-    const normalized = {
-      signals: Array.isArray(parsed.signals)
-        ? parsed.signals
-            .filter(item => typeof item === 'string' && item.trim())
-            .slice(0, 2)
-        : [],
-      recommendations: Array.isArray(parsed.recommendations)
-        ? parsed.recommendations.slice(0, 2).map(rec => ({
-            title: typeof rec?.title === 'string' ? rec.title : '',
-            author: typeof rec?.author === 'string' ? rec.author : '',
-            reason: typeof rec?.reason === 'string' ? rec.reason : '',
-          }))
-        : [],
-    };
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify(normalized),
-    };
-  } catch (error) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        error: 'Server error',
-        details: error.message,
-      }),
-    };
-  }
-}
 
 // ─── renderSummary ────────────────────────────────────────────────────────────
 
@@ -339,8 +180,15 @@ function renderBookActions(book) {
     case 'reading':
       return `
         <button class="book-action" data-action="mark-finished" data-book-id="${book.id}">Mark Finished</button>
+        <button class="book-action book-action--subtle" data-action="stop-reading" data-book-id="${book.id}">Stop Reading</button>
         <button class="book-action book-action--subtle" data-action="move-to-read" data-book-id="${book.id}">To-Read</button>
         <button class="book-action book-action--subtle" data-action="archive" data-book-id="${book.id}">Archive</button>
+      `;
+
+    case 'stopped':
+      return `
+        <button class="book-action book-action--subtle" data-action="move-reading" data-book-id="${book.id}">Resume</button>
+        <button class="book-action book-action--subtle" data-action="archive" data-book-id="${book.id}">Remove</button>
       `;
     case 'finished':
       return `
@@ -357,6 +205,7 @@ const STATUS_LABELS = {
   'to-read':  'To Read',
   'reading':  'Reading',
   'finished': 'Finished',
+  'stopped':  'Stopped',
 };
 
 function renderBookCard(book) {
@@ -421,7 +270,7 @@ function renderBookSection(heading, books, emptyText, sectionId) {
 // ─── renderView ───────────────────────────────────────────────────────────────
 
 function renderView(viewState) {
-  const { toRead, reading, finished } = getBooksByStatus(viewState.books);
+  const { toRead, reading, finished, stopped } = getBooksByStatus(viewState.books);
   const summary = getBookSummary(viewState.books);
 
   return `
@@ -439,13 +288,16 @@ function renderView(viewState) {
         ${renderAIRecommendations(viewState.ai)}
 
         <div class="books-add-row">
-          <button class="books-add-btn" id="addBookBtn">Add a Book</button>
+          <button class="books-add-btn books-add-btn--outline" id="addBookBtn">
+  + Add a Book
+</button>
         </div>
 
         <div class="books-sections">
           ${renderBookSection('Currently Reading', reading, 'Nothing in progress yet.', 'section-reading')}
           ${renderBookSection('Want to Read',      toRead,  'Your reading list is empty.', 'section-to-read')}
           ${renderBookSection('Finished',          finished, 'No finished books yet.', 'section-finished')}
+          ${renderBookSection('Stopped',           stopped, 'No stopped books yet.', 'section-stopped')}
         </div>
 
       </div>
@@ -470,11 +322,11 @@ export const BooksView = {
     const viewState = {
       books,
       ai: {
-  hasRequested: false,
-  loading: false,
-  data: null,
-  error: null,
-},
+        hasRequested: false,
+        loading: false,
+        data: null,
+        error: null,
+      },
     };
 
     // ── Render ───────────────────────────────────────────────────────────────
@@ -592,6 +444,71 @@ export const BooksView = {
       });
     }
 
+    function openChoiceSheet(config) {
+      return new Promise(resolve => {
+        const optionsHtml = (config.options || []).map(option => `
+          <button
+            type="button"
+            class="bsheet-choice-btn"
+            data-choice-value="${option.value}"
+          >
+            <span class="bsheet-choice-title">${option.title}</span>
+            ${option.description
+              ? `<span class="bsheet-choice-description">${option.description}</span>`
+              : ''}
+          </button>
+        `).join('');
+
+        const bodyHtml = config.body
+          ? `<p class="bsheet-body">${config.body}</p>`
+          : '';
+
+        const el = document.createElement('div');
+        el.className = 'bsheet-overlay';
+        el.innerHTML = `
+          <div class="bsheet" role="dialog" aria-modal="true">
+            <div class="bsheet-handle"></div>
+            <p class="bsheet-title">${config.title}</p>
+            ${bodyHtml}
+            <div class="bsheet-choice-list">
+              ${optionsHtml}
+            </div>
+            <div class="bsheet-actions">
+              <button class="bsheet-btn bsheet-btn--cancel" id="bsheetChoiceCancel">
+                ${config.cancel || 'Cancel'}
+              </button>
+            </div>
+          </div>
+        `;
+
+        document.body.appendChild(el);
+        requestAnimationFrame(() => el.classList.add('bsheet-overlay--open'));
+
+        function close(result) {
+          el.classList.remove('bsheet-overlay--open');
+          el.addEventListener('transitionend', () => el.remove(), { once: true });
+          resolve(result);
+        }
+
+        el.querySelectorAll('[data-choice-value]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            close(btn.getAttribute('data-choice-value'));
+          });
+        });
+
+        el.querySelector('#bsheetChoiceCancel')?.addEventListener('click', () => close(null));
+
+        el.addEventListener('click', (e) => {
+          if (e.target === el) close(null);
+        });
+
+        requestAnimationFrame(() => {
+          const first = el.querySelector('[data-choice-value]');
+          if (first) first.focus();
+        });
+      });
+    }
+
     // ── Shared helpers ────────────────────────────────────────────────────────
 
     function parseRating(input) {
@@ -603,36 +520,86 @@ export const BooksView = {
 
     // ── AI ────────────────────────────────────────────────────────────────────
 
-    async function loadAIRecommendations() {
-  try {
-    viewState.ai.hasRequested = true;
-    viewState.ai.loading = true;
-    viewState.ai.error = null;
-    render();
+    async function loadAIRecommendations(options = {}) {
+      try {
+        viewState.ai.hasRequested = true;
+        viewState.ai.loading = true;
+        viewState.ai.error = null;
+        render();
 
-    const data = await fetchBookRecommendations(viewState.books);
+        const data = await fetchBookRecommendations(viewState.books, options);
 
-    viewState.ai.data = data;
-  } catch (error) {
-    viewState.ai.error = error.message || 'Failed to load recommendations';
-  } finally {
-    viewState.ai.loading = false;
-    render();
-  }
-}
+        viewState.ai.data = data;
+      } catch (error) {
+        viewState.ai.error = error.message || 'Failed to load recommendations';
+      } finally {
+        viewState.ai.loading = false;
+        render();
+      }
+    }
+
+    async function askRecommendationMode() {
+      const result = await openChoiceSheet({
+        title: 'How should I recommend?',
+        body: 'Choose a recommendation style.',
+        options: [
+          {
+            value: 'history',
+            title: 'Based on my reading history',
+            description: 'Uses your finished and stopped books to tailor suggestions.',
+          },
+          {
+            value: 'prompt',
+            title: 'Use a custom prompt',
+            description: 'Ask for something specific, like a mood, genre, or theme.',
+          },
+        ],
+        cancel: 'Cancel',
+      });
+
+      if (!result) return null;
+
+      return { mode: result };
+    }
+
+    async function askRecommendationPrompt() {
+      const result = await openSheet({
+        title: 'What are you in the mood for?',
+        body: 'Your reading history will still be considered.',
+        fields: [
+          {
+            id: 'prompt',
+            label: 'Prompt',
+            type: 'textarea',
+            placeholder: 'e.g. Something thoughtful but easy to read, or a practical psychology book that is less dense.',
+            value: '',
+            rows: 4,
+          },
+        ],
+        confirm: 'Get Suggestions',
+        cancel: 'Cancel',
+      });
+
+      if (!result) return null;
+
+      const prompt = (result.prompt || '').trim();
+      if (!prompt) return null;
+
+      return prompt;
+    }
 
     // ── Refresh ──────────────────────────────────────────────────────────────
 
     async function refreshBooks() {
-  viewState.books = await listBooks(user.uid);
+      viewState.books = await listBooks(user.uid);
 
-  viewState.ai.data = null;
-  viewState.ai.error = null;
-  viewState.ai.loading = false;
-  viewState.ai.hasRequested = false;
+      viewState.ai.data = null;
+      viewState.ai.error = null;
+      viewState.ai.loading = false;
+      viewState.ai.hasRequested = false;
 
-  render();
-}
+      render();
+    }
 
     // ── Action dispatch ──────────────────────────────────────────────────────
 
@@ -684,6 +651,45 @@ export const BooksView = {
             rating: parseRating(result.rating),
             notes:  result.notes.trim(),
           });
+          await refreshBooks();
+          return;
+        }
+
+        if (action === 'stop-reading') {
+          const result = await openSheet({
+            title: 'Stop reading?',
+            body: 'Optional: this helps improve future recommendations.',
+            fields: [
+              {
+                id: 'reason',
+                label: 'Why are you stopping?',
+                type: 'text',
+                placeholder: 'e.g. Not for me, too slow, wrong timing',
+                value: '',
+              },
+              {
+                id: 'notes',
+                label: 'Anything else? (optional)',
+                type: 'textarea',
+                placeholder: 'A short note…',
+                value: '',
+                rows: 3,
+              },
+            ],
+            confirm: 'Save',
+            cancel: 'Cancel',
+          });
+
+          if (!result) return;
+
+          const updatedBook = applyBookStatusTransition(book, 'stopped');
+
+          updatedBook.stoppedAt = new Date().toISOString();
+          updatedBook.feedbackType = 'negative';
+          updatedBook.feedbackReason = result.reason || '';
+          updatedBook.feedbackNotes = result.notes || '';
+
+          await updateBook(user.uid, bookId, updatedBook);
           await refreshBooks();
           return;
         }
@@ -755,14 +761,32 @@ export const BooksView = {
       });
 
       document.getElementById('loadBookRecommendationsBtn')?.addEventListener('click', async () => {
-  const btn = document.getElementById('loadBookRecommendationsBtn');
-  if (btn) btn.disabled = true;
+        const btn = document.getElementById('loadBookRecommendationsBtn');
+        if (btn) btn.disabled = true;
 
-  await loadAIRecommendations();
+        try {
+          const modeChoice = await askRecommendationMode();
+          if (!modeChoice) return;
 
-  const nextBtn = document.getElementById('loadBookRecommendationsBtn');
-  if (nextBtn) nextBtn.disabled = false;
-});  
+          if (modeChoice.mode === 'prompt') {
+            const userPrompt = await askRecommendationPrompt();
+            if (!userPrompt) return;
+
+            await loadAIRecommendations({
+              mode: 'prompt',
+              userPrompt,
+            });
+            return;
+          }
+
+          await loadAIRecommendations({
+            mode: 'history',
+          });
+        } finally {
+          const nextBtn = document.getElementById('loadBookRecommendationsBtn');
+          if (nextBtn) nextBtn.disabled = false;
+        }
+      });
 
       document.getElementById('addBookBtn')?.addEventListener('click', async () => {
         const result = await openSheet({
@@ -804,6 +828,5 @@ export const BooksView = {
       });
     }
 
-  
   },
 };

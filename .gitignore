@@ -1,2 +1,25 @@
-# Local Netlify folder
-.netlify
+# Environment variables
+.env
+.env.local
+.env.*
+
+# Node modules
+node_modules/
+
+# Build output
+dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Vite cache
+.vite/
+
+# Netlify
+.netlify/

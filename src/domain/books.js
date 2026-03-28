@@ -9,17 +9,15 @@
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const VALID_STATUSES = ['to-read', 'reading', 'finished'];
+const VALID_STATUSES = ['to-read', 'reading', 'finished', 'stopped'];
+const VALID_FEEDBACK_TYPES = ['positive', 'negative', 'neutral'];
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-// Returns true if the value is one of the three permitted status strings.
 function isValidStatus(status) {
   return VALID_STATUSES.includes(status);
 }
 
-// Coerce any incoming categories value into a plain array of non-empty strings.
-// Accepts: undefined, null, a string, or an array.
 function normalizeCategories(value) {
   if (!value) return [];
   if (typeof value === 'string') {
@@ -34,8 +32,6 @@ function normalizeCategories(value) {
   return [];
 }
 
-// Coerce a rating value to a number 1–5, or null.
-// Rejects objects, out-of-range numbers, and non-numeric strings.
 function normalizeRating(value) {
   if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
@@ -44,70 +40,79 @@ function normalizeRating(value) {
   return Math.round(n);
 }
 
+function normalizeText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeFeedbackType(value) {
+  return VALID_FEEDBACK_TYPES.includes(value) ? value : null;
+}
+
 // ─── normalizeBook ────────────────────────────────────────────────────────────
 
-// Returns a safe, consistent book object with all fields guaranteed to be present.
-// Should be called on every Firestore document before use.
-// Does NOT set createdAt or updatedAt — those are managed by the service layer.
 export function normalizeBook(book) {
   if (!book || typeof book !== 'object') {
     return {
-      id:          null,
-      title:       '',
-      author:      '',
-      status:      'to-read',
-      coverUrl:    null,
-      description: '',
-      categories:  [],
-      source:      'manual',
-      rating:      null,
-      notes:       '',
-      startedAt:   null,
-      finishedAt:  null,
-      createdAt:   null,
-      updatedAt:   null,
-      isArchived:  false,
+      id:             null,
+      title:          '',
+      author:         '',
+      status:         'to-read',
+      coverUrl:       null,
+      description:    '',
+      categories:     [],
+      source:         'manual',
+      rating:         null,
+      notes:          '',
+      startedAt:      null,
+      finishedAt:     null,
+      stoppedAt:      null,
+      feedbackType:   null,
+      feedbackReason: '',
+      feedbackNotes:  '',
+      archivedReason: '',
+      createdAt:      null,
+      updatedAt:      null,
+      isArchived:     false,
     };
   }
 
   return {
-    id:          book.id          ?? null,
-    title:       typeof book.title === 'string'  ? book.title.trim()  : '',
-    author:      typeof book.author === 'string' ? book.author.trim() : '',
-    status:      isValidStatus(book.status)      ? book.status        : 'to-read',
-    coverUrl:    book.coverUrl    ?? null,
-    description: typeof book.description === 'string' ? book.description.trim() : '',
-    categories:  normalizeCategories(book.categories),
-    source:      typeof book.source === 'string' ? book.source : 'manual',
-    rating:      normalizeRating(book.rating),
-    notes:       typeof book.notes === 'string'  ? book.notes.trim()  : '',
-    startedAt:   book.startedAt   ?? null,
-    finishedAt:  book.finishedAt  ?? null,
-    createdAt:   book.createdAt   ?? null,
-    updatedAt:   book.updatedAt   ?? null,
-    isArchived:  book.isArchived  === true,
+    id:             book.id ?? null,
+    title:          normalizeText(book.title),
+    author:         normalizeText(book.author),
+    status:         isValidStatus(book.status) ? book.status : 'to-read',
+    coverUrl:       book.coverUrl ?? null,
+    description:    normalizeText(book.description),
+    categories:     normalizeCategories(book.categories),
+    source:         typeof book.source === 'string' ? book.source : 'manual',
+    rating:         normalizeRating(book.rating),
+    notes:          normalizeText(book.notes),
+    startedAt:      book.startedAt ?? null,
+    finishedAt:     book.finishedAt ?? null,
+    stoppedAt:      book.stoppedAt ?? null,
+    feedbackType:   normalizeFeedbackType(book.feedbackType),
+    feedbackReason: normalizeText(book.feedbackReason),
+    feedbackNotes:  normalizeText(book.feedbackNotes),
+    archivedReason: normalizeText(book.archivedReason),
+    createdAt:      book.createdAt ?? null,
+    updatedAt:      book.updatedAt ?? null,
+    isArchived:     book.isArchived === true,
   };
 }
 
 // ─── validateBookInput ────────────────────────────────────────────────────────
 
-// Validates user-supplied create/edit input before it is written to Firestore.
-// Returns { valid: boolean, errors: { fieldName: 'message' } }.
-// An empty errors object means the input is valid.
 export function validateBookInput(input) {
   const errors = {};
 
-  // title — required
   if (!input?.title || typeof input.title !== 'string' || input.title.trim().length === 0) {
     errors.title = 'Title is required.';
   }
 
-  // status — must be a valid value if supplied
   if (input?.status !== undefined && !isValidStatus(input.status)) {
     errors.status = `Status must be one of: ${VALID_STATUSES.join(', ')}.`;
   }
 
-  // rating — null / empty is allowed; if supplied it must be 1–5
   if (input?.rating !== undefined && input.rating !== null && input.rating !== '') {
     const n = Number(input.rating);
     if (!Number.isFinite(n) || n < 1 || n > 5) {
@@ -115,7 +120,6 @@ export function validateBookInput(input) {
     }
   }
 
-  // categories — accepted as omitted, string, or array; validated only on type
   if (
     input?.categories !== undefined &&
     input.categories !== null &&
@@ -123,6 +127,14 @@ export function validateBookInput(input) {
     !Array.isArray(input.categories)
   ) {
     errors.categories = 'Categories must be a list of text values.';
+  }
+
+  if (
+    input?.feedbackType !== undefined &&
+    input.feedbackType !== null &&
+    !VALID_FEEDBACK_TYPES.includes(input.feedbackType)
+  ) {
+    errors.feedbackType = `Feedback type must be one of: ${VALID_FEEDBACK_TYPES.join(', ')}.`;
   }
 
   return {
@@ -133,18 +145,6 @@ export function validateBookInput(input) {
 
 // ─── applyBookStatusTransition ────────────────────────────────────────────────
 
-// Applies lifecycle rules for a status change and returns a new normalised book.
-// Does NOT mutate the original. Returns the original normalised book unchanged
-// if nextStatus is invalid.
-//
-// Lifecycle rules:
-//   to-read  → startedAt = null,  finishedAt = null
-//   reading  → startedAt = now (if missing), finishedAt = null
-//   finished → startedAt = now (if missing), finishedAt = now
-//
-// Edge cases handled explicitly:
-//   finished → reading : finishedAt cleared, startedAt preserved if present
-//   to-read  → finished: startedAt and finishedAt both set to now
 export function applyBookStatusTransition(book, nextStatus, now = new Date().toISOString()) {
   const normalized = normalizeBook(book);
 
@@ -152,23 +152,31 @@ export function applyBookStatusTransition(book, nextStatus, now = new Date().toI
     return normalized;
   }
 
-  // Shallow-clone so we never mutate the input.
   const updated = { ...normalized, status: nextStatus };
 
   switch (nextStatus) {
     case 'to-read':
-      updated.startedAt  = null;
+      updated.startedAt = null;
       updated.finishedAt = null;
+      updated.stoppedAt = null;
       break;
 
     case 'reading':
-      updated.startedAt  = normalized.startedAt ?? now;
+      updated.startedAt = normalized.startedAt ?? now;
       updated.finishedAt = null;
+      updated.stoppedAt = null;
       break;
 
     case 'finished':
-      updated.startedAt  = normalized.startedAt ?? now;
+      updated.startedAt = normalized.startedAt ?? now;
       updated.finishedAt = now;
+      updated.stoppedAt = null;
+      break;
+
+    case 'stopped':
+      updated.startedAt = normalized.startedAt ?? now;
+      updated.finishedAt = null;
+      updated.stoppedAt = now;
       break;
   }
 
@@ -177,12 +185,8 @@ export function applyBookStatusTransition(book, nextStatus, now = new Date().toI
 
 // ─── getBooksByStatus ─────────────────────────────────────────────────────────
 
-// Groups an array of books by status. Archived books are excluded.
-// Each book is normalised before grouping so callers can pass raw Firestore data.
-//
-// Returns: { toRead: [], reading: [], finished: [] }
 export function getBooksByStatus(books) {
-  const result = { toRead: [], reading: [], finished: [] };
+  const result = { toRead: [], reading: [], finished: [], stopped: [] };
 
   if (!Array.isArray(books)) return result;
 
@@ -192,9 +196,18 @@ export function getBooksByStatus(books) {
     if (book.isArchived) continue;
 
     switch (book.status) {
-      case 'to-read':  result.toRead.push(book);   break;
-      case 'reading':  result.reading.push(book);  break;
-      case 'finished': result.finished.push(book); break;
+      case 'to-read':
+        result.toRead.push(book);
+        break;
+      case 'reading':
+        result.reading.push(book);
+        break;
+      case 'finished':
+        result.finished.push(book);
+        break;
+      case 'stopped':
+        result.stopped.push(book);
+        break;
     }
   }
 
@@ -203,83 +216,73 @@ export function getBooksByStatus(books) {
 
 // ─── getBookSummary ───────────────────────────────────────────────────────────
 
-// Returns counts across all statuses. Archived books are excluded.
-// Derives counts from getBooksByStatus so the grouping logic stays in one place.
-//
-// Returns: { totalCount, toReadCount, readingCount, finishedCount }
 export function getBookSummary(books) {
-  const { toRead, reading, finished } = getBooksByStatus(books);
+  const { toRead, reading, finished, stopped } = getBooksByStatus(books);
 
-  const toReadCount    = toRead.length;
-  const readingCount   = reading.length;
-  const finishedCount  = finished.length;
+  const toReadCount = toRead.length;
+  const readingCount = reading.length;
+  const finishedCount = finished.length;
+  const stoppedCount = stopped.length;
 
   return {
-    totalCount: toReadCount + readingCount + finishedCount,
+    totalCount: toReadCount + readingCount + finishedCount + stoppedCount,
     toReadCount,
     readingCount,
     finishedCount,
+    stoppedCount,
   };
 }
 
 // ─── getBookRecommendations ───────────────────────────────────────────────────
 
-// Derives a small set of calm, deterministic reading signals from the user's
-// own finished books. No external calls, no randomness, no AI.
-// Operates only on non-archived finished books.
-//
-// Returns: array of { title, message } — between 0 and 3 items.
-// Returns [] when there are no finished books at all.
 export function getBookRecommendations(books) {
   if (!Array.isArray(books)) return [];
 
-  const finished = books.filter(b => !b.isArchived && b.status === 'finished');
+  const finished = books
+    .map(normalizeBook)
+    .filter(book => !book.isArchived && book.status === 'finished');
 
   if (finished.length === 0) return [];
 
   const signals = [];
 
-  // Signal 1 — highly rated books: the user is finding books they genuinely enjoy.
-  const highlyRated = finished.filter(b => b.rating >= 4);
+  const highlyRated = finished.filter(book => book.rating >= 4);
   if (highlyRated.length >= 2) {
     signals.push({
-      title:   'You know what you enjoy',
+      title: 'You know what you enjoy',
       message: `${highlyRated.length} of your finished books landed at 4 or 5 stars. You have a clear sense of what resonates — trust that instinct when choosing what to read next.`,
     });
   }
 
-  // Signal 2 — notes present on multiple books: reflective reading is a habit.
-  const withNotes = finished.filter(b => b.notes && b.notes.trim().length > 0);
+  const withNotes = finished.filter(book => book.notes && book.notes.trim().length > 0);
   if (withNotes.length >= 2) {
     signals.push({
-      title:   'Reflective reading suits you',
+      title: 'Reflective reading suits you',
       message: `You've left notes on ${withNotes.length} finished books. Taking time to capture what stayed with you tends to make the reading stick.`,
     });
   }
 
-  // Signal 3 — repeated category across finished books: a theme is emerging.
   const categoryCounts = {};
   for (const book of finished) {
-    for (const cat of (book.categories || [])) {
+    for (const cat of book.categories || []) {
       if (cat) categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
     }
   }
+
   const topCategory = Object.entries(categoryCounts)
     .filter(([, count]) => count >= 2)
     .sort(([, a], [, b]) => b - a)[0];
 
   if (topCategory) {
     signals.push({
-      title:   'A theme is emerging',
+      title: 'A theme is emerging',
       message: `Several of your finished books touch on ${topCategory[0]}. That's worth leaning into.`,
     });
   }
 
-  // Fallback — finished books exist but signals are thin.
-  // Shown only when no richer signal fired, to avoid an empty section.
   if (signals.length === 0) {
     signals.push({
-      title:   'Keep going',
+      title: 'Keep going',
       message: 'Rate and note a few more finished books and your reading signals will start to take shape.',
     });
   }
