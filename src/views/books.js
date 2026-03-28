@@ -20,6 +20,7 @@ import {
   updateBook,
   archiveBook,
 } from '../services/books.js';
+import { fetchBookRecommendations } from '../services/ai.js';
 
 // ─── renderRecommendations ────────────────────────────────────────────────────
 
@@ -42,6 +43,274 @@ function renderRecommendations(books) {
       </div>
     </div>
   `;
+}
+
+function renderAIRecommendations(aiState) {
+  if (!aiState?.hasRequested) {
+    return `
+      <div class="books-recommendations">
+        <p class="books-recommendations-heading">Suggested for you</p>
+        <div class="books-recommendation-list">
+          <div class="books-recommendation-item">
+            <p class="books-recommendation-text">Get tailored suggestions based on what you've finished reading.</p>
+          </div>
+        </div>
+        <div class="books-add-row">
+          <button class="books-add-btn" id="loadBookRecommendationsBtn">Recommend a Book</button>
+        </div>
+      </div>
+    `;
+  }
+
+  if (aiState.loading) {
+    return `
+      <div class="books-recommendations">
+        <p class="books-recommendations-heading">Suggested for you</p>
+        <div class="books-recommendation-list">
+          <div class="books-recommendation-item">
+            <p class="books-recommendation-text">Finding recommendations…</p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (aiState.error) {
+    return `
+      <div class="books-recommendations">
+        <p class="books-recommendations-heading">Suggested for you</p>
+        <div class="books-recommendation-list">
+          <div class="books-recommendation-item">
+            <p class="books-recommendation-text">Unable to load recommendations right now.</p>
+          </div>
+        </div>
+        <div class="books-add-row">
+          <button class="books-add-btn" id="loadBookRecommendationsBtn">Try Again</button>
+        </div>
+      </div>
+    `;
+  }
+
+  const signals = Array.isArray(aiState?.data?.signals) ? aiState.data.signals : [];
+  const recommendations = Array.isArray(aiState?.data?.recommendations)
+    ? aiState.data.recommendations
+    : [];
+
+  if (signals.length === 0 && recommendations.length === 0) {
+    return `
+      <div class="books-recommendations">
+        <p class="books-recommendations-heading">Suggested for you</p>
+        <div class="books-recommendation-list">
+          <div class="books-recommendation-item">
+            <p class="books-recommendation-text">Not enough reading history yet to suggest something meaningful.</p>
+          </div>
+        </div>
+        <div class="books-add-row">
+          <button class="books-add-btn" id="loadBookRecommendationsBtn">Try Again</button>
+        </div>
+      </div>
+    `;
+  }
+
+  const signalItems = signals.map(signal => `
+    <div class="books-recommendation-item">
+      <p class="books-recommendation-text">${signal}</p>
+    </div>
+  `).join('');
+
+  const recommendationItems = recommendations.map(rec => `
+    <div class="books-recommendation-item">
+      <p class="books-recommendation-title">${rec.title || ''}${rec.author ? ` — ${rec.author}` : ''}</p>
+      <p class="books-recommendation-text">${rec.reason || ''}</p>
+    </div>
+  `).join('');
+
+  return `
+    <div class="books-recommendations">
+      <p class="books-recommendations-heading">Suggested for you</p>
+      <div class="books-recommendation-list">
+        ${signalItems}
+        ${recommendationItems}
+      </div>
+      <div class="books-add-row">
+        <button class="books-add-btn" id="loadBookRecommendationsBtn">Refresh Suggestions</button>
+      </div>
+    </div>
+  `;
+}
+
+// ─── renderAIRecommendations ──────────────────────────────────────────────────
+
+export async function handler(event) {
+  try {
+    const body = JSON.parse(event.body || '{}');
+    const books = Array.isArray(body.books) ? body.books : [];
+
+    const finishedBooks = books
+      .filter(book => book && book.status === 'finished')
+      .slice(0, 8)
+      .map(book => ({
+        title: book.title || '',
+        author: book.author || '',
+        rating: book.rating ?? null,
+        notes: (book.notes || '').slice(0, 200),
+      }));
+
+    if (finishedBooks.length === 0) {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          signals: [],
+          recommendations: [],
+        }),
+      };
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          error: 'Missing GEMINI_API_KEY',
+        }),
+      };
+    }
+
+    const prompt = `
+Return valid JSON only.
+
+Shape:
+{
+  "signals": ["...", "..."],
+  "recommendations": [
+    {
+      "title": "...",
+      "author": "...",
+      "reason": "..."
+    }
+  ]
+}
+
+Rules:
+- Max 2 signals
+- Max 2 recommendations
+- Each signal must be short
+- Each reason must be short
+- No markdown
+- No code fences
+- No text outside JSON
+
+Finished books:
+${JSON.stringify(finishedBooks)}
+`.trim();
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.3,
+            topP: 0.8,
+            maxOutputTokens: 1200,
+            responseMimeType: 'application/json',
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          error: 'Gemini request failed',
+          details: errorText,
+        }),
+      };
+    }
+
+    const data = await response.json();
+    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const finishReason = data?.candidates?.[0]?.finishReason || '';
+
+    if (!rawText) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          error: 'Gemini returned empty content',
+          finishReason,
+        }),
+      };
+    }
+
+    if (finishReason === 'MAX_TOKENS') {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          error: 'Gemini response was truncated',
+          finishReason,
+          raw: rawText,
+        }),
+      };
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (error) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          error: 'Gemini returned invalid JSON',
+          finishReason,
+          raw: rawText,
+          details: error.message,
+        }),
+      };
+    }
+
+    const normalized = {
+      signals: Array.isArray(parsed.signals)
+        ? parsed.signals
+            .filter(item => typeof item === 'string' && item.trim())
+            .slice(0, 2)
+        : [],
+      recommendations: Array.isArray(parsed.recommendations)
+        ? parsed.recommendations.slice(0, 2).map(rec => ({
+            title: typeof rec?.title === 'string' ? rec.title : '',
+            author: typeof rec?.author === 'string' ? rec.author : '',
+            reason: typeof rec?.reason === 'string' ? rec.reason : '',
+          }))
+        : [],
+    };
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(normalized),
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Server error',
+        details: error.message,
+      }),
+    };
+  }
 }
 
 // ─── renderSummary ────────────────────────────────────────────────────────────
@@ -167,6 +436,7 @@ function renderView(viewState) {
 
         ${renderSummary(summary)}
         ${renderRecommendations(viewState.books)}
+        ${renderAIRecommendations(viewState.ai)}
 
         <div class="books-add-row">
           <button class="books-add-btn" id="addBookBtn">Add a Book</button>
@@ -197,11 +467,24 @@ export const BooksView = {
       return;
     }
 
-    const viewState = { books };
+    const viewState = {
+      books,
+      ai: {
+  hasRequested: false,
+  loading: false,
+  data: null,
+  error: null,
+},
+    };
 
     // ── Render ───────────────────────────────────────────────────────────────
 
-    container.innerHTML = renderView(viewState);
+    function render() {
+      container.innerHTML = renderView(viewState);
+      bindActions();
+    }
+
+    render();
 
     // ── Bottom sheet ─────────────────────────────────────────────────────────
     //
@@ -223,7 +506,6 @@ export const BooksView = {
 
     function openSheet(config) {
       return new Promise(resolve => {
-        // Build fields HTML
         const fieldsHtml = (config.fields || []).map(f => {
           if (f.type === 'textarea') {
             return `
@@ -278,7 +560,6 @@ export const BooksView = {
 
         document.body.appendChild(el);
 
-        // Animate in on next frame so the CSS transition fires.
         requestAnimationFrame(() => el.classList.add('bsheet-overlay--open'));
 
         function close(result) {
@@ -300,12 +581,10 @@ export const BooksView = {
 
         el.querySelector('#bsheetCancel').addEventListener('click', () => close(null));
 
-        // Tap outside the sheet to cancel.
         el.addEventListener('click', (e) => {
           if (e.target === el) close(null);
         });
 
-        // Focus first input for accessibility.
         requestAnimationFrame(() => {
           const first = el.querySelector('input, textarea');
           if (first) first.focus();
@@ -315,7 +594,6 @@ export const BooksView = {
 
     // ── Shared helpers ────────────────────────────────────────────────────────
 
-    // Strict integer-only rating parse — rejects decimals like "4.5".
     function parseRating(input) {
       const trimmed = (input || '').trim();
       if (trimmed === '' || !/^\d+$/.test(trimmed)) return null;
@@ -323,13 +601,38 @@ export const BooksView = {
       return (n >= 1 && n <= 5) ? n : null;
     }
 
+    // ── AI ────────────────────────────────────────────────────────────────────
+
+    async function loadAIRecommendations() {
+  try {
+    viewState.ai.hasRequested = true;
+    viewState.ai.loading = true;
+    viewState.ai.error = null;
+    render();
+
+    const data = await fetchBookRecommendations(viewState.books);
+
+    viewState.ai.data = data;
+  } catch (error) {
+    viewState.ai.error = error.message || 'Failed to load recommendations';
+  } finally {
+    viewState.ai.loading = false;
+    render();
+  }
+}
+
     // ── Refresh ──────────────────────────────────────────────────────────────
 
     async function refreshBooks() {
-      viewState.books = await listBooks(user.uid);
-      container.innerHTML = renderView(viewState);
-      bindActions();
-    }
+  viewState.books = await listBooks(user.uid);
+
+  viewState.ai.data = null;
+  viewState.ai.error = null;
+  viewState.ai.loading = false;
+  viewState.ai.hasRequested = false;
+
+  render();
+}
 
     // ── Action dispatch ──────────────────────────────────────────────────────
 
@@ -338,7 +641,6 @@ export const BooksView = {
       if (!book) return;
 
       try {
-        // ── Archive ─────────────────────────────────────────────────────────
         if (action === 'archive') {
           const result = await openSheet({
             title:   'Archive this book?',
@@ -354,7 +656,6 @@ export const BooksView = {
           return;
         }
 
-        // ── Edit reflection ──────────────────────────────────────────────────
         if (action === 'edit-reflection') {
           const result = await openSheet({
             title:   'Edit reflection',
@@ -387,7 +688,6 @@ export const BooksView = {
           return;
         }
 
-        // ── Status transitions ───────────────────────────────────────────────
         const nextStatus = {
           'start-reading': 'reading',
           'mark-finished':  'finished',
@@ -399,7 +699,6 @@ export const BooksView = {
 
         const updatedBook = applyBookStatusTransition(book, nextStatus);
 
-        // ── Reflection on finish ─────────────────────────────────────────────
         if (action === 'mark-finished') {
           const result = await openSheet({
             title:   `Finished — "${book.title}"`,
@@ -423,7 +722,7 @@ export const BooksView = {
             confirm: 'Save reflection',
             cancel:  'Skip',
           });
-          // null means Skip — still mark finished, just without reflection data.
+
           updatedBook.rating = result ? parseRating(result.rating) : null;
           updatedBook.notes  = result ? result.notes.trim() : '';
         }
@@ -454,6 +753,16 @@ export const BooksView = {
         await handleAction(action, bookId);
         btn.disabled = false;
       });
+
+      document.getElementById('loadBookRecommendationsBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('loadBookRecommendationsBtn');
+  if (btn) btn.disabled = true;
+
+  await loadAIRecommendations();
+
+  const nextBtn = document.getElementById('loadBookRecommendationsBtn');
+  if (nextBtn) nextBtn.disabled = false;
+});  
 
       document.getElementById('addBookBtn')?.addEventListener('click', async () => {
         const result = await openSheet({
@@ -495,6 +804,6 @@ export const BooksView = {
       });
     }
 
-    bindActions();
+  
   },
 };
