@@ -203,6 +203,126 @@ export const BooksView = {
 
     container.innerHTML = renderView(viewState);
 
+    // ── Bottom sheet ─────────────────────────────────────────────────────────
+    //
+    // openSheet(config) mounts a bottom sheet onto document.body and returns a
+    // Promise that resolves with the submitted result object, or null if the
+    // user cancels.
+    //
+    // config shape:
+    // {
+    //   title:    string,
+    //   body:     string (optional explanatory text),
+    //   fields:   [ { id, label, type, placeholder, value, rows } ],
+    //   confirm:  string  (primary button label),
+    //   cancel:   string  (cancel button label, defaults to 'Cancel'),
+    //   danger:   bool    (true makes the confirm button use the danger style),
+    // }
+    //
+    // Resolves with: { [fieldId]: value, ... } or null on cancel.
+
+    function openSheet(config) {
+      return new Promise(resolve => {
+        // Build fields HTML
+        const fieldsHtml = (config.fields || []).map(f => {
+          if (f.type === 'textarea') {
+            return `
+              <div class="bsheet-field">
+                <label class="bsheet-label" for="bsheet-${f.id}">${f.label}</label>
+                <textarea
+                  class="bsheet-textarea textarea"
+                  id="bsheet-${f.id}"
+                  placeholder="${f.placeholder || ''}"
+                  rows="${f.rows || 3}"
+                >${f.value || ''}</textarea>
+              </div>
+            `;
+          }
+          return `
+            <div class="bsheet-field">
+              <label class="bsheet-label" for="bsheet-${f.id}">${f.label}</label>
+              <input
+                class="bsheet-input"
+                id="bsheet-${f.id}"
+                type="${f.type || 'text'}"
+                placeholder="${f.placeholder || ''}"
+                value="${f.value || ''}"
+                autocomplete="off"
+              />
+            </div>
+          `;
+        }).join('');
+
+        const bodyHtml = config.body
+          ? `<p class="bsheet-body">${config.body}</p>`
+          : '';
+
+        const confirmClass = config.danger
+          ? 'bsheet-btn bsheet-btn--danger'
+          : 'bsheet-btn bsheet-btn--primary';
+
+        const el = document.createElement('div');
+        el.className = 'bsheet-overlay';
+        el.innerHTML = `
+          <div class="bsheet" role="dialog" aria-modal="true">
+            <div class="bsheet-handle"></div>
+            <p class="bsheet-title">${config.title}</p>
+            ${bodyHtml}
+            ${fieldsHtml}
+            <div class="bsheet-actions">
+              <button class="${confirmClass}" id="bsheetConfirm">${config.confirm}</button>
+              <button class="bsheet-btn bsheet-btn--cancel" id="bsheetCancel">${config.cancel || 'Cancel'}</button>
+            </div>
+          </div>
+        `;
+
+        document.body.appendChild(el);
+
+        // Animate in on next frame so the CSS transition fires.
+        requestAnimationFrame(() => el.classList.add('bsheet-overlay--open'));
+
+        function close(result) {
+          el.classList.remove('bsheet-overlay--open');
+          el.addEventListener('transitionend', () => el.remove(), { once: true });
+          resolve(result);
+        }
+
+        el.getElementById = (id) => el.querySelector(`#${id}`);
+
+        el.querySelector('#bsheetConfirm').addEventListener('click', () => {
+          const result = {};
+          (config.fields || []).forEach(f => {
+            const input = el.querySelector(`#bsheet-${f.id}`);
+            result[f.id] = input ? input.value : '';
+          });
+          close(result);
+        });
+
+        el.querySelector('#bsheetCancel').addEventListener('click', () => close(null));
+
+        // Tap outside the sheet to cancel.
+        el.addEventListener('click', (e) => {
+          if (e.target === el) close(null);
+        });
+
+        // Focus first input for accessibility.
+        requestAnimationFrame(() => {
+          const first = el.querySelector('input, textarea');
+          if (first) first.focus();
+        });
+      });
+    }
+
+    // ── Shared helpers ────────────────────────────────────────────────────────
+
+    // Strict integer-only rating parse — rejects decimals like "4.5".
+    function parseRating(input) {
+      const trimmed = (input || '').trim();
+      if (trimmed === '' || !/^\d+$/.test(trimmed)) return null;
+      const n = Number(trimmed);
+      return (n >= 1 && n <= 5) ? n : null;
+    }
+
     // ── Refresh ──────────────────────────────────────────────────────────────
 
     async function refreshBooks() {
@@ -212,56 +332,62 @@ export const BooksView = {
     }
 
     // ── Action dispatch ──────────────────────────────────────────────────────
-    //
-    // All card buttons use data-action and data-book-id attributes.
-    // A single delegated listener on the sections container handles all of them.
-    // After any mutation: re-fetch from source and re-render.
 
     async function handleAction(action, bookId) {
       const book = viewState.books.find(b => b.id === bookId);
       if (!book) return;
 
-      // Strict integer-only rating parse — rejects decimals like "4.5".
-      function parseRating(input) {
-        const trimmed = (input || '').trim();
-        if (trimmed === '' || !/^\d+$/.test(trimmed)) return null;
-        const n = Number(trimmed);
-        return (n >= 1 && n <= 5) ? n : null;
-      }
-
       try {
+        // ── Archive ─────────────────────────────────────────────────────────
         if (action === 'archive') {
-          const confirmed = window.confirm(
-            'Archive this book?\n\nIt will be removed from your active lists, but not permanently deleted.'
-          );
-          if (!confirmed) return;
+          const result = await openSheet({
+            title:   'Archive this book?',
+            body:    'It will be removed from your active lists, but not permanently deleted.',
+            fields:  [],
+            confirm: 'Archive',
+            cancel:  'Keep it',
+            danger:  true,
+          });
+          if (!result) return;
           await archiveBook(user.uid, bookId);
           await refreshBooks();
           return;
         }
 
+        // ── Edit reflection ──────────────────────────────────────────────────
         if (action === 'edit-reflection') {
-          const ratingInput = prompt(
-            'Update your rating (1–5, optional):',
-            book.rating ?? ''
-          );
-          if (ratingInput === null) return; // user cancelled
-
-          const noteInput = prompt(
-            'Update your note (optional):',
-            book.notes ?? ''
-          );
-          if (noteInput === null) return; // user cancelled
-
+          const result = await openSheet({
+            title:   'Edit reflection',
+            fields:  [
+              {
+                id:          'rating',
+                label:       'Rating (1–5, optional)',
+                type:        'text',
+                placeholder: 'e.g. 4',
+                value:       book.rating ?? '',
+              },
+              {
+                id:          'notes',
+                label:       'What stayed with you?',
+                type:        'textarea',
+                placeholder: 'A line or two is plenty…',
+                value:       book.notes ?? '',
+                rows:        3,
+              },
+            ],
+            confirm: 'Save',
+          });
+          if (!result) return;
           await updateBook(user.uid, bookId, {
             ...book,
-            rating: parseRating(ratingInput),
-            notes:  noteInput.trim(),
+            rating: parseRating(result.rating),
+            notes:  result.notes.trim(),
           });
           await refreshBooks();
           return;
         }
 
+        // ── Status transitions ───────────────────────────────────────────────
         const nextStatus = {
           'start-reading': 'reading',
           'mark-finished':  'finished',
@@ -273,12 +399,33 @@ export const BooksView = {
 
         const updatedBook = applyBookStatusTransition(book, nextStatus);
 
+        // ── Reflection on finish ─────────────────────────────────────────────
         if (action === 'mark-finished') {
-          const ratingInput = prompt('How would you rate this book? (1–5, optional)') || '';
-          updatedBook.rating = parseRating(ratingInput);
-
-          const noteInput  = (prompt('What stayed with you from this book? (optional)') || '').trim();
-          updatedBook.notes = noteInput;
+          const result = await openSheet({
+            title:   `Finished — "${book.title}"`,
+            fields:  [
+              {
+                id:          'rating',
+                label:       'Rating (1–5, optional)',
+                type:        'text',
+                placeholder: 'e.g. 4',
+                value:       '',
+              },
+              {
+                id:          'notes',
+                label:       'What stayed with you? (optional)',
+                type:        'textarea',
+                placeholder: 'A line or two is plenty…',
+                value:       '',
+                rows:        3,
+              },
+            ],
+            confirm: 'Save reflection',
+            cancel:  'Skip',
+          });
+          // null means Skip — still mark finished, just without reflection data.
+          updatedBook.rating = result ? parseRating(result.rating) : null;
+          updatedBook.notes  = result ? result.notes.trim() : '';
         }
 
         await updateBook(user.uid, bookId, updatedBook);
@@ -303,26 +450,42 @@ export const BooksView = {
         const bookId = btn.dataset.bookId;
         if (!action || !bookId) return;
 
-        // Disable the button immediately to prevent double-fire.
         btn.disabled = true;
-
         await handleAction(action, bookId);
-
-        // If the button is still in the DOM after re-render, re-enable it.
-        // In practice, re-render replaces the node, so this is a safety guard only.
         btn.disabled = false;
       });
 
       document.getElementById('addBookBtn')?.addEventListener('click', async () => {
-        const title = (prompt('Book title:') || '').trim();
-        if (!title) return;
+        const result = await openSheet({
+          title:  'Add a book',
+          fields: [
+            {
+              id:          'title',
+              label:       'Title',
+              type:        'text',
+              placeholder: 'Book title',
+              value:       '',
+            },
+            {
+              id:          'author',
+              label:       'Author (optional)',
+              type:        'text',
+              placeholder: 'Author name',
+              value:       '',
+            },
+          ],
+          confirm: 'Add to list',
+        });
 
-        const author = (prompt('Author (optional):') || '').trim();
+        if (!result) return;
+
+        const title = result.title.trim();
+        if (!title) return;
 
         try {
           await createBook(user.uid, {
             title,
-            author: author || '',
+            author: result.author.trim(),
             status: 'to-read',
           });
           await refreshBooks();
