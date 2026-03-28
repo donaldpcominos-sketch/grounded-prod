@@ -5259,3 +5259,47 @@ body {
   border-color: var(--color-border);
   color: var(--color-ink-2);
 }
+.books-add-btn--ai {
+  background: #111;
+  color: #fff;
+}
+
+.books-add-btn--outline {
+  background: transparent;
+  border: 1px solid rgba(0,0,0,0.2);
+}
+.bsheet-choice-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.bsheet-choice-btn {
+  width: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #fff;
+  border-radius: 16px;
+  padding: 14px 16px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.bsheet-choice-btn:focus,
+.bsheet-choice-btn:hover {
+  border-color: rgba(0, 0, 0, 0.28);
+}
+
+.bsheet-choice-title {
+  font-weight: 600;
+  color: var(--color-ink-1);
+}
+
+.bsheet-choice-description {
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--color-ink-2);
+}

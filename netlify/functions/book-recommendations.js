@@ -2,6 +2,8 @@ export async function handler(event) {
   try {
     const body = JSON.parse(event.body || '{}');
     const books = Array.isArray(body.books) ? body.books : [];
+    const mode = body.mode === 'prompt' ? 'prompt' : 'history';
+    const userPrompt = typeof body.userPrompt === 'string' ? body.userPrompt.trim() : '';
 
     const existingTitles = new Set(
       books
@@ -9,22 +11,49 @@ export async function handler(event) {
         .filter(Boolean)
     );
 
-    const finishedBooks = books
-      .filter(book => book && book.status === 'finished' && !book.isArchived)
-      .slice(0, 8)
+    const positiveSignals = books
+      .filter(book => (
+        book &&
+        book.status === 'finished' &&
+        !book.isArchived
+      ))
+      .slice(0, 3)
       .map(book => ({
         title: book.title || '',
         author: book.author || '',
         rating: book.rating ?? null,
-        notes: (book.notes || '').slice(0, 200),
+        notes: (book.notes || '').slice(0, 60),
       }));
 
-    if (finishedBooks.length === 0) {
+    const negativeSignals = books
+      .filter(book => (
+        book &&
+        book.status === 'stopped' &&
+        !book.isArchived
+      ))
+      .slice(0, 2)
+      .map(book => ({
+        title: book.title || '',
+        author: book.author || '',
+        reason: (book.feedbackReason || '').slice(0, 50),
+        notes: (book.feedbackNotes || '').slice(0, 60),
+      }));
+
+    if (mode === 'history' && positiveSignals.length === 0 && negativeSignals.length === 0) {
       return {
         statusCode: 200,
         body: JSON.stringify({
           signals: [],
           recommendations: [],
+        }),
+      };
+    }
+
+    if (mode === 'prompt' && !userPrompt) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({
+          error: 'Please enter a prompt first.',
         }),
       };
     }
@@ -40,7 +69,13 @@ export async function handler(event) {
       };
     }
 
-    const prompt = `
+    const historyContext = JSON.stringify({
+      positiveSignals,
+      negativeSignals,
+    });
+
+const prompt = mode === 'prompt'
+  ? `
 Return valid JSON only.
 
 Shape:
@@ -56,18 +91,58 @@ Shape:
 }
 
 Rules:
-- Max 2 signals
-- Max 2 recommendations
-- Each signal must be short
-- Each reason must be short
+- Maximum 2 signals
+- Maximum 2 recommendations
+- Keep every field short
+- Keep reasons to one short sentence
 - No markdown
 - No code fences
 - No text outside JSON
-- Do not recommend any book the user has already read or already added
-- Be conservative if the reading history is thin
+- Treat the user's prompt as the primary instruction
+- Use reading history only as a light secondary input
+- If the user's prompt conflicts with reading history, follow the user's prompt
+- If the user's prompt is vague, playful, aesthetic, or theme-based, respond to it directly instead of defaulting to reading history
+- Do not infer dislikes unless negativeSignals contains actual stopped books
+- If negativeSignals is empty, only describe positive preferences or uncertainty
+- Do not recommend books already in the user's library
+- If the prompt is too vague to map confidently to books, make your best interpretation based on the prompt words themselves
 
-Finished books:
-${JSON.stringify(finishedBooks)}
+User prompt:
+${userPrompt}
+
+Reading history:
+${historyContext}
+`.trim()
+      : `
+Return valid JSON only.
+
+Shape:
+{
+  "signals": ["...", "..."],
+  "recommendations": [
+    {
+      "title": "...",
+      "author": "...",
+      "reason": "..."
+    }
+  ]
+}
+
+Rules:
+- Maximum 2 signals
+- Maximum 2 recommendations
+- Keep every field short
+- Keep reasons to one short sentence
+- No markdown
+- No code fences
+- No text outside JSON
+- Use positive and negative reading signals
+- Do not infer dislikes unless negativeSignals contains actual stopped books
+- If negativeSignals is empty, only describe positive preferences or uncertainty
+- Do not recommend books already in the user's library
+
+Reading history:
+${historyContext}
 `.trim();
 
     const response = await fetch(
@@ -92,6 +167,9 @@ ${JSON.stringify(finishedBooks)}
             topP: 0.8,
             maxOutputTokens: 1200,
             responseMimeType: 'application/json',
+            thinkingConfig: {
+              thinkingBudget: 0,
+            },
           },
         }),
       }
@@ -122,13 +200,12 @@ ${JSON.stringify(finishedBooks)}
       };
     }
 
-    if (finishReason === 'MAX_TOKENS') {
+    if (finishReason && finishReason !== 'STOP') {
       return {
         statusCode: 500,
         body: JSON.stringify({
-          error: 'Gemini response was truncated',
+          error: 'Gemini response was incomplete',
           finishReason,
-          raw: rawText,
         }),
       };
     }
@@ -141,8 +218,6 @@ ${JSON.stringify(finishedBooks)}
         statusCode: 500,
         body: JSON.stringify({
           error: 'Gemini returned invalid JSON',
-          finishReason,
-          raw: rawText,
           details: error.message,
         }),
       };
