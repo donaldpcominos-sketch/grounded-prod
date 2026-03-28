@@ -32,7 +32,8 @@ let state = {
   bannedExercises: [],
   user: null,
   container: null,
-  overlay: null   // 'skip' | 'substitute' | 'alternate' | 'push-day'
+  overlay: null,         // 'skip' | 'substitute' | 'alternate' | 'push-day'
+  selectedDay: null      // { dow, dateLabel, daysFromToday } — set when previewing a future day
 };
 
 function setState(patch) {
@@ -120,6 +121,14 @@ function getTomorrowDateString() {
   const d = new Date();
   d.setDate(d.getDate() + 1);
   return d.toDateString();
+}
+
+// Generate a deterministic day seed for a date N days from today.
+// Mirrors the existing getDaySeed() approach so preview sessions are stable.
+function getDaySeedForOffset(daysFromToday) {
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromToday);
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
 }
 
 // ─── Screen: Plan ─────────────────────────────────────────────────────────────
@@ -239,24 +248,31 @@ function renderPlan() {
           <p class="card-label">Coming up</p>
           <div class="week-strip-scroll mt-3" id="weekStripScroll">
             <div class="week-strip-inner">
-              ${extWeekPlan.map((day, i) => `
-                <div class="week-day ${day.isToday ? 'week-day--today' : ''} ${day.isPast ? 'week-day--past' : ''}" data-week-index="${i}">
+              ${extWeekPlan.map((day, i) => {
+                const isSelected = state.selectedDay && day.date.toDateString() === state.selectedDay.dateString;
+                const isClickable = !day.isToday && !day.isPast;
+                return `
+                <div class="week-day ${day.isToday ? 'week-day--today' : ''} ${day.isPast ? 'week-day--past' : ''} ${isSelected ? 'week-day--selected' : ''} ${isClickable ? 'week-day--clickable' : ''}" data-week-index="${i}" ${isClickable ? `data-preview-dow="${day.day}" data-preview-date-label="${day.dateLabel}" data-preview-days-offset="${i - extWeekPlan.findIndex(d => d.isToday)}" data-preview-date-string="${day.date.toDateString()}"` : ''}>
                   <p class="week-day-name">${DAY_SHORT[day.day]}</p>
                   <p class="week-day-date">${day.dateLabel}</p>
                   <div class="week-day-dot ${getTypeColor(day.type)}${day.isPushed ? ' week-day-dot--pushed' : ''}"></div>
                   <p class="week-day-focus">${getTypeTag(day.type)}</p>
                   ${day.isPushed ? '<p class="week-day-pushed">+1</p>' : ''}
                 </div>
-              `).join('')}
+              `}).join('')}
             </div>
           </div>
         </section>
 
-        <!-- Today's focus -->
+        <!-- Today's focus / selected day preview -->
         <section class="card mt-3">
-          <p class="card-label">Today&#39;s focus</p>
+          <p class="card-label">${state.selectedDay ? `Preview — ${DAY_NAMES[state.selectedDay.dow]}` : 'Today&#39;s focus'}</p>
+          ${state.selectedDay ? `<p class="card-body mt-1" style="color:var(--color-ink-4);font-size:0.8rem;">Preview only — no data saved</p>` : ''}
           <div class="focus-list mt-3">
-            ${todaySplit.pool.slice(0, 3).map(ex => `
+            ${(state.selectedDay
+              ? buildSession(state.selectedDay.dow, 'standard', getDaySeedForOffset(state.selectedDay.daysOffset)).exercises.filter(e => !state.bannedExercises.includes(e.id))
+              : todaySplit.pool
+            ).slice(0, 3).map(ex => `
               <div class="focus-item">
                 <div>
                   <p class="focus-name">${ex.name}</p>
@@ -265,8 +281,12 @@ function renderPlan() {
                 <div class="intensity-dots">${getIntensityDots(ex.intensity)}</div>
               </div>
             `).join('')}
-            <p class="focus-more">+ more exercises in your session</p>
+            <p class="focus-more">+ more exercises in ${state.selectedDay ? 'this' : 'your'} session</p>
           </div>
+          ${state.selectedDay ? `
+            <button class="btn-secondary w-full mt-4" id="previewFullBtn">See full preview</button>
+            <button class="nap-past-btn mt-2" id="backTodayBtn">← Back to today</button>
+          ` : ''}
         </section>
 
       </div>
@@ -344,33 +364,8 @@ function bindPlanEvents() {
     }
   }
 
-  if (alreadyDone) {
-    document.getElementById('redoBtn')?.addEventListener('click', () => {
-      state.savedSession = null;
-      render();
-    });
-    return;
-  }
-
-  if (inProgress) {
-    document.getElementById('resumeBtn')?.addEventListener('click', () => resumeSession());
-    document.getElementById('newSessionBtn')?.addEventListener('click', () => { state.savedSession = null; render(); });
-    return;
-  }
-
-  document.getElementById('quickBtn')?.addEventListener('click', () => startSession('quick'));
-  document.getElementById('standardBtn')?.addEventListener('click', () => startSession('standard'));
-
-  // Alternate activity buttons
-  document.querySelectorAll('[data-alt-id]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state._pendingAltId    = btn.dataset.altId;
-      state._pendingAltLabel = btn.dataset.altLabel;
-      setState({ overlay: 'alternate' });
-    });
-  });
-
-  // Overlay events
+  // Overlay events — must be bound before any early returns so that overlays
+  // rendered over the alreadyDone/inProgress states are still interactive.
   if (state.overlay === 'alternate') {
     document.getElementById('overlayCancel')?.addEventListener('click', () => setState({ overlay: null }));
     document.getElementById('overlayBackdrop')?.addEventListener('click', e => {
@@ -389,6 +384,56 @@ function bindPlanEvents() {
       await savePushDecision(false);
     });
   }
+// Week strip — click future days to preview
+  document.querySelectorAll('[data-preview-dow]').forEach(el => {
+    el.addEventListener('click', () => {
+      setState({
+        selectedDay: {
+          dow:         Number(el.dataset.previewDow),
+          dateLabel:   el.dataset.previewDateLabel,
+          daysOffset:  Number(el.dataset.previewDaysOffset),
+          dateString:  el.dataset.previewDateString,
+        }
+      });
+    });
+  });
+  // Back-to-today and full-preview buttons (shown when a day is selected)
+  document.getElementById('backTodayBtn')?.addEventListener('click', () => {
+    setState({ selectedDay: null });
+  });
+  document.getElementById('previewFullBtn')?.addEventListener('click', () => {
+    setState({ screen: 'day-preview' });
+  });
+
+  if (alreadyDone) {
+    document.getElementById('redoBtn')?.addEventListener('click', () => {
+      state.savedSession = null;
+      render();
+    });
+    return;
+  }
+
+  if (inProgress) {
+    document.getElementById('resumeBtn')?.addEventListener('click', () => resumeSession());
+    document.getElementById('newSessionBtn')?.addEventListener('click', () => { state.savedSession = null; render(); });
+    return;
+  }
+
+  document.getElementById('quickBtn')?.addEventListener('click', () => startSession('quick'));
+  document.getElementById('standardBtn')?.addEventListener('click', () => startSession('standard'));
+
+  
+
+
+
+  // Alternate activity buttons
+  document.querySelectorAll('[data-alt-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state._pendingAltId    = btn.dataset.altId;
+      state._pendingAltLabel = btn.dataset.altLabel;
+      setState({ overlay: 'alternate' });
+    });
+  });
 }
 
 // ─── Alternate activity logic ─────────────────────────────────────────────────
@@ -791,14 +836,82 @@ function bindCompleteEvents() {
   document.getElementById('doneBtn')?.addEventListener('click', () => setState({ screen: 'plan' }));
 }
 
+// ─── Screen: Day preview ──────────────────────────────────────────────────────
+// View-only — no Firestore writes. Shows what a future day's standard session
+// would look like using the same deterministic buildSession() logic as today.
+
+function renderDayPreview() {
+  const { selectedDay } = state;
+  const split = WEEKLY_SPLIT[selectedDay.dow];
+  const seed = getDaySeedForOffset(selectedDay.daysOffset);
+  const session = buildSession(selectedDay.dow, 'standard', seed);
+  const exercises = session.exercises.filter(e => !state.bannedExercises.includes(e.id));
+
+  return `
+    <main class="view-scroll">
+      <div class="view-inner">
+        <header class="page-header">
+          <p class="eyebrow">Preview</p>
+          <div class="header-row">
+            <div>
+              <h1 class="page-title">${DAY_NAMES[selectedDay.dow]}</h1>
+              <p class="page-subtitle">${selectedDay.dateLabel} &middot; ${split.label}</p>
+            </div>
+          </div>
+        </header>
+
+        <div class="preview-notice" role="status">
+          <p class="preview-notice-text">This is a preview — no data will be saved.</p>
+        </div>
+
+        <section class="card mt-3">
+          <div class="workout-focus-row">
+            <span class="tag ${getTypeColor(split.type)}">${getTypeTag(split.type)}</span>
+          </div>
+          <h2 class="card-title mt-2">${split.label}</h2>
+          <p class="workout-focus-label">${split.focus}</p>
+        </section>
+
+        <section class="card mt-3">
+          <p class="card-label">Standard session</p>
+          <p class="card-body mt-1">${exercises.length} exercises &middot; 35–45 min</p>
+          <div class="focus-list mt-3">
+            ${exercises.map((ex, i) => `
+              <div class="focus-item">
+                <div>
+                  <span class="ex-card-index" style="margin-right:8px;color:var(--color-ink-4);font-size:0.75rem;">${String(i + 1).padStart(2, '0')}</span>
+                  <p class="focus-name" style="display:inline;">${ex.name}</p>
+                  <p class="focus-muscle">${ex.muscle} &middot; ${ex.sets} &times; ${ex.reps}</p>
+                </div>
+                <div class="intensity-dots">${getIntensityDots(ex.intensity)}</div>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+
+        <button class="btn-secondary w-full mt-4" id="backTodayBtn">← Back to today</button>
+        <div style="height:12px;"></div>
+
+      </div>
+    </main>
+  `;
+}
+
+function bindDayPreviewEvents() {
+  document.getElementById('backTodayBtn')?.addEventListener('click', () => {
+    setState({ screen: 'plan', selectedDay: null });
+  });
+}
+
 // ─── Render dispatcher ────────────────────────────────────────────────────────
 
 function render() {
   if (!state.container) return;
   switch (state.screen) {
-    case 'plan':     state.container.innerHTML = renderPlan();     bindPlanEvents();     break;
-    case 'session':  state.container.innerHTML = renderSession();  bindSessionEvents();  break;
-    case 'complete': state.container.innerHTML = renderComplete(); bindCompleteEvents(); break;
+    case 'plan':        state.container.innerHTML = renderPlan();        bindPlanEvents();        break;
+    case 'session':     state.container.innerHTML = renderSession();     bindSessionEvents();     break;
+    case 'complete':    state.container.innerHTML = renderComplete();    bindCompleteEvents();    break;
+    case 'day-preview': state.container.innerHTML = renderDayPreview();  bindDayPreviewEvents(); break;
   }
 }
 
@@ -832,6 +945,7 @@ export const WorkoutsView = {
       user,
       container,
       overlay: null,
+      selectedDay: null,
       _pendingAltId: null,
       _pendingAltLabel: null
     };

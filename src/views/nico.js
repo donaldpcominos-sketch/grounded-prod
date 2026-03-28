@@ -1,5 +1,5 @@
 // src/views/nico.js
-import { getTodayNicoLog, saveNicoLog } from '../services/nico.js';
+import { getTodayNicoLog, saveNicoLog, updateNap, deleteNap } from '../services/nico.js';
 import { getTodayDisplay, showToast } from '../utils.js';
 import { db } from '../lib/firebase.js';
 import { doc, getDoc } from 'firebase/firestore';
@@ -255,8 +255,9 @@ let state = {
   completedActivities: [],
   napInProgress: false,
   napStartTime: null,
-  overlay: null,
-  nicoAgeMonths: null  // null = age not set; number = filter by age
+  overlay: null,       // 'past-nap' | 'edit-nap' | 'delete-nap'
+  _editNapIndex: null, // index into state.naps for edit/delete operations
+  nicoAgeMonths: null
 };
 
 function setState(patch) {
@@ -302,7 +303,7 @@ function totalNapMinutes(naps) {
 
 function isActivityAgeAppropriate(activity) {
   const age = state.nicoAgeMonths;
-  if (age === null || age === undefined) return true; // no filter if age not set
+  if (age === null || age === undefined) return true;
   const [min, max] = activity.ageRange;
   if (age < min) return false;
   if (max !== null && age > max) return false;
@@ -340,7 +341,7 @@ async function nicoSave(data) {
   }
 }
 
-// ─── Render ───────────────────────────────────────────────────────────────────
+// ─── Overlay renderers ────────────────────────────────────────────────────────
 
 function renderPastNapOverlay() {
   return `
@@ -367,18 +368,70 @@ function renderPastNapOverlay() {
   `;
 }
 
+function renderEditNapOverlay() {
+  const nap = state.naps[state._editNapIndex] || {};
+  return `
+    <div class="overlay-backdrop" id="overlayBackdrop">
+      <div class="overlay-sheet">
+        <p class="overlay-title">Edit nap</p>
+        <p class="overlay-subtitle">Adjust the start and end time.</p>
+        <div class="nap-time-inputs mt-4">
+          <div class="nap-time-field">
+            <label class="nap-time-label">Started</label>
+            <input type="time" id="editNapStart" class="nap-time-input" value="${nap.start || ''}" />
+          </div>
+          <span class="nap-time-sep">→</span>
+          <div class="nap-time-field">
+            <label class="nap-time-label">Woke up</label>
+            <input type="time" id="editNapEnd" class="nap-time-input" value="${nap.end || ''}" />
+          </div>
+        </div>
+        <p id="editNapError" class="nap-error-text mt-2"></p>
+        <button class="btn-primary w-full mt-4" id="saveEditNapBtn">Save changes</button>
+        <button class="btn-secondary w-full mt-2" id="overlayCancel">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderDeleteNapOverlay() {
+  const nap = state.naps[state._editNapIndex] || {};
+  const label = nap.start && nap.end
+    ? `${formatTime(nap.start)} → ${formatTime(nap.end)}`
+    : 'this nap';
+  return `
+    <div class="overlay-backdrop" id="overlayBackdrop">
+      <div class="overlay-sheet">
+        <p class="overlay-title">Delete nap?</p>
+        <p class="overlay-subtitle">${label}</p>
+        <div class="overlay-options mt-4">
+          <button class="overlay-opt overlay-opt--warn" id="confirmDeleteNapBtn">
+            <p class="overlay-opt-title">Yes, delete it</p>
+            <p class="overlay-opt-desc">This cannot be undone</p>
+          </button>
+        </div>
+        <button class="btn-secondary w-full mt-3" id="overlayCancel">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+
 function renderView() {
   const { filter, naps, completedActivities, nicoAgeMonths } = state;
   const activities = getFilteredActivities();
   const activeNap = naps.find(n => !n.end);
-  const completedNaps = naps.filter(n => n.end).sort((a, b) => {
-    const toMins = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
-    return toMins(a.start) - toMins(b.start);
-  });
+  const completedNaps = naps
+    .map((n, i) => ({ ...n, _napIndex: i }))
+    .filter(n => n.end)
+    .sort((a, b) => {
+      const toMins = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+      return toMins(a.start) - toMins(b.start);
+    });
   const totalMins = totalNapMinutes(naps);
   const ageLabel = getAgeLabel(nicoAgeMonths);
 
-  // Hidden activities count (for age banner context)
   const allFiltered = ACTIVITIES.filter(a => {
     if (filter === 'all') return true;
     if (filter === 'active') return a.energy === 'active';
@@ -438,6 +491,20 @@ function renderView() {
                   <span class="nap-row-label">Nap ${i + 1}</span>
                   <span class="nap-row-time">${formatTime(n.start)} → ${formatTime(n.end)}</span>
                   <span class="nap-row-dur">${napDuration(n.start, n.end) || '—'}</span>
+                  <div class="nap-row-actions">
+                    <button
+                      class="nap-action-btn"
+                      data-nap-action="edit"
+                      data-nap-index="${n._napIndex}"
+                      aria-label="Edit nap ${i + 1}"
+                    >Edit</button>
+                    <button
+                      class="nap-action-btn nap-action-btn--delete"
+                      data-nap-action="delete"
+                      data-nap-index="${n._napIndex}"
+                      aria-label="Delete nap ${i + 1}"
+                    >Delete</button>
+                  </div>
                 </div>
               `).join('')}
             </div>
@@ -457,7 +524,9 @@ function renderView() {
           <button class="nap-past-btn mt-2" id="logPastNapBtn">+ Log a past nap</button>
         </section>
 
-        ${state.overlay === 'past-nap' ? renderPastNapOverlay() : ''}
+        ${state.overlay === 'past-nap'   ? renderPastNapOverlay()   : ''}
+        ${state.overlay === 'edit-nap'   ? renderEditNapOverlay()   : ''}
+        ${state.overlay === 'delete-nap' ? renderDeleteNapOverlay() : ''}
 
         <!-- Age banner (shown if age is set) -->
         ${ageLabel ? `
@@ -553,12 +622,33 @@ function bindEvents() {
     setState({ overlay: 'past-nap' });
   });
 
-  if (state.overlay === 'past-nap') {
-    document.getElementById('overlayCancel')?.addEventListener('click', () => setState({ overlay: null }));
-    document.getElementById('overlayBackdrop')?.addEventListener('click', e => {
-      if (e.target.id === 'overlayBackdrop') setState({ overlay: null });
+  // Nap: edit / delete action buttons on each nap row
+  document.querySelectorAll('[data-nap-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.napAction;
+      const index  = Number(btn.dataset.napIndex);
+      if (action === 'edit') {
+        setState({ overlay: 'edit-nap', _editNapIndex: index });
+      } else if (action === 'delete') {
+        setState({ overlay: 'delete-nap', _editNapIndex: index });
+      }
     });
+  });
 
+  // ── Shared overlay cancel / backdrop dismiss ─────────────────────────────
+
+  if (state.overlay) {
+    document.getElementById('overlayCancel')?.addEventListener('click', () =>
+      setState({ overlay: null, _editNapIndex: null })
+    );
+    document.getElementById('overlayBackdrop')?.addEventListener('click', e => {
+      if (e.target.id === 'overlayBackdrop') setState({ overlay: null, _editNapIndex: null });
+    });
+  }
+
+  // ── Past nap overlay ─────────────────────────────────────────────────────
+
+  if (state.overlay === 'past-nap') {
     document.getElementById('savePastNapBtn')?.addEventListener('click', async () => {
       const startVal = document.getElementById('pastNapStart')?.value;
       const endVal   = document.getElementById('pastNapEnd')?.value;
@@ -586,6 +676,59 @@ function bindEvents() {
     });
   }
 
+  // ── Edit nap overlay ─────────────────────────────────────────────────────
+
+  if (state.overlay === 'edit-nap') {
+    document.getElementById('saveEditNapBtn')?.addEventListener('click', async () => {
+      const startVal = document.getElementById('editNapStart')?.value;
+      const endVal   = document.getElementById('editNapEnd')?.value;
+      const errorEl  = document.getElementById('editNapError');
+
+      if (!startVal || !endVal) {
+        errorEl.textContent = 'Please enter both a start and end time.';
+        return;
+      }
+      const [sh, sm] = startVal.split(':').map(Number);
+      const [eh, em] = endVal.split(':').map(Number);
+      if ((eh * 60 + em) <= (sh * 60 + sm)) {
+        errorEl.textContent = 'End time must be after start time.';
+        return;
+      }
+
+      const index   = state._editNapIndex;
+      const newNaps = [...state.naps];
+      newNaps[index] = { start: startVal, end: endVal };
+      state.naps         = newNaps;
+      state.overlay      = null;
+      state._editNapIndex = null;
+
+      try {
+        await updateNap(state.user.uid, index, { start: startVal, end: endVal });
+        showToast('Nap updated ✓', 'success', 2000);
+      } catch (_) { /* toast already shown */ }
+      render();
+    });
+  }
+
+  // ── Delete nap overlay ───────────────────────────────────────────────────
+
+  if (state.overlay === 'delete-nap') {
+    document.getElementById('confirmDeleteNapBtn')?.addEventListener('click', async () => {
+      const index   = state._editNapIndex;
+      const newNaps = [...state.naps];
+      newNaps.splice(index, 1);
+      state.naps         = newNaps;
+      state.overlay      = null;
+      state._editNapIndex = null;
+
+      try {
+        await deleteNap(state.user.uid, index);
+        showToast('Nap deleted', 'success', 2000);
+      } catch (_) { /* toast already shown */ }
+      render();
+    });
+  }
+
   // Activity: mark done / undone
   document.querySelectorAll('[data-activity-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -609,7 +752,6 @@ export const NicoView = {
   async init(container, user) {
     container.innerHTML = '<div class="loading-state"><p>Loading Nico…</p></div>';
 
-    // Load nap/activity log and user profile (for nicoAgeMonths) in parallel
     const [log, userSnap] = await Promise.all([
       getTodayNicoLog(user.uid),
       getDoc(doc(db, 'users', user.uid))
@@ -629,6 +771,7 @@ export const NicoView = {
       napInProgress: false,
       napStartTime: null,
       overlay: null,
+      _editNapIndex: null,
       nicoAgeMonths
     };
     render();
