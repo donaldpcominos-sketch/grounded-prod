@@ -4700,3 +4700,562 @@ body {
     rgba(201,165,92,0.9)
   );
 }
+/* ─── Notification preferences UI ───────────────────────────────────────────── */
+/* Phase 1: preference card classes.                                              */
+/* Existing notif-row, notif-toggle, notif-toggle-track, notif-time-row,         */
+/* notif-time-row--hidden, notif-time-label, notif-time-input, notif-hint        */
+/* are already defined earlier in this file and are not redefined here.          */
+
+.notif-detail { overflow: hidden; }
+.notif-detail--hidden { display: none; }
+
+.notif-section-divider {
+  height: 1px;
+  background: var(--color-border-soft);
+}
+
+.notif-section-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+}
+
+.notif-time-pair {
+  display: flex;
+  gap: 16px;
+}
+
+.notif-time-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+/* ─── In-app reminder banner ─────────────────────────────────────────────────── */
+/* Phase 3: shown on the Today screen when the reminder decision is eligible.    */
+/* Calm, minimal, dismissible. Sits between the return card and priority actions. */
+
+.reminder-banner {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  padding: 16px 20px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  animation: reminder-banner-in 0.25s ease both;
+}
+
+@keyframes reminder-banner-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.reminder-banner--dismissing {
+  animation: reminder-banner-out 0.3s ease both;
+  pointer-events: none;
+}
+
+@keyframes reminder-banner-out {
+  from { opacity: 1; transform: translateY(0); max-height: 120px; }
+  to   { opacity: 0; transform: translateY(-4px); max-height: 0; padding: 0; margin: 0; }
+}
+
+.reminder-banner-inner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reminder-banner-text {
+  flex: 1;
+}
+
+.reminder-banner-headline {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-ink);
+  line-height: 1.4;
+}
+
+.reminder-banner-body {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--color-ink-3);
+  line-height: 1.55;
+}
+
+.reminder-banner-dismiss {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 14px;
+  color: var(--color-ink-4);
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+  margin-top: 2px;
+  transition: color 0.15s ease;
+}
+
+.reminder-banner-dismiss:hover {
+  color: var(--color-ink-2);
+}
+
+/* ─── Reminder banner: messageType modifiers ─────────────────────────────────── */
+/* Phase 5: tonal styling variation keyed to engagement state.                   */
+/* Both modifiers use a left border accent — subtle, premium, non-gamified.      */
+/* Base .reminder-banner styles are defined above and are unchanged.             */
+
+.reminder-banner--soft {
+  border-left: 3px solid rgba(90, 122, 90, 0.45);
+  padding-left: 17px; /* compensate for the extra border width (20px - 3px) */
+}
+
+.reminder-banner--gentle {
+  border-left: 3px solid var(--color-border);
+  padding-left: 17px;
+}
+/* ─── Books view ─────────────────────────────────────────────────────────────── */
+
+/* Summary pill row — soft stat chips below the header */
+.books-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.books-summary-item {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-soft);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-ink-3);
+  white-space: nowrap;
+}
+
+/* Add button row */
+.books-add-row {
+  margin-bottom: 28px;
+}
+
+.books-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 13px 20px;
+  border-radius: var(--radius-btn);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  color: var(--color-ink-2);
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.books-add-btn:hover {
+  border-color: var(--color-ink-3);
+  color: var(--color-ink);
+}
+
+.books-add-btn:active {
+  opacity: 0.75;
+}
+
+/* Sections container */
+.books-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+/* Individual section block */
+.books-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Section heading row — title + count on same line */
+.books-section-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.books-section-heading {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+}
+
+.books-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-soft);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-ink-4);
+  line-height: 1;
+}
+
+/* Empty state — calm placeholder */
+.books-empty-state {
+  padding: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border-soft);
+}
+
+.books-empty-state-text {
+  font-size: 13px;
+  color: var(--color-ink-4);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* Card list — stacked with consistent gap */
+.book-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Book card — elevated surface card */
+.book-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  padding: 18px 20px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Card body — title, status badge, author */
+.book-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.book-card-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.book-card-title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--color-ink);
+  line-height: 1.25;
+  flex: 1;
+}
+
+.book-card-author {
+  font-size: 12px;
+  color: var(--color-ink-4);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* Status badge — subtle pill, right-aligned beside title */
+.book-card-status {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-soft);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 2px; /* optical alignment with title cap height */
+}
+
+/* Card actions — flex row of soft pill chips, wraps on mobile */
+.book-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Primary action chip */
+.book-action {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.book-action:hover  { opacity: 0.88; }
+.book-action:active { opacity: 0.72; }
+
+.book-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Secondary / subtle action chip */
+.book-action--subtle {
+  background: var(--color-surface-2);
+  color: var(--color-ink-3);
+  border: 1px solid var(--color-border-soft);
+}
+
+.book-action--subtle:hover {
+  opacity: 1;
+  border-color: var(--color-border);
+  color: var(--color-ink-2);
+}
+/* ─── Books: reading signals / recommendations ───────────────────────────────── */
+
+.books-recommendations {
+  margin-bottom: 20px;
+}
+
+.books-recommendations-heading {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+  margin-bottom: 10px;
+}
+
+.books-recommendation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.books-recommendation-item {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+
+.books-recommendation-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  margin-bottom: 4px;
+}
+
+.books-recommendation-text {
+  font-size: 13px;
+  color: var(--color-ink-3);
+  line-height: 1.55;
+}
+/* ─── Books: bottom sheet / modal ────────────────────────────────────────────── */
+
+/* Overlay — full-screen scrim behind the sheet */
+.bsheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(28, 25, 23, 0);         /* --color-ink at 0% */
+  display: flex;
+  align-items: flex-end;
+  transition: background 0.25s ease;
+}
+
+.bsheet-overlay--open {
+  background: rgba(28, 25, 23, 0.35);
+}
+
+/* Sheet panel — slides up from the bottom */
+.bsheet {
+  width: 100%;
+  max-width: 480px;                         /* matches .app-shell */
+  margin: 0 auto;
+  background: var(--color-surface);
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  padding: 12px 24px 36px;
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.10);
+}
+
+.bsheet-overlay--open .bsheet {
+  transform: translateY(0);
+}
+
+/* Drag handle — decorative */
+.bsheet-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+  margin: 0 auto 20px;
+}
+
+/* Sheet title */
+.bsheet-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--color-ink);
+  line-height: 1.25;
+  margin-bottom: 8px;
+}
+
+/* Optional explanatory body text */
+.bsheet-body {
+  font-size: 13px;
+  color: var(--color-ink-3);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+/* Field group */
+.bsheet-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.bsheet-field:last-of-type {
+  margin-bottom: 0;
+}
+
+/* Field label */
+.bsheet-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--color-ink-4);
+}
+
+/* Text input */
+.bsheet-input {
+  width: 100%;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 15px;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.bsheet-input::placeholder {
+  color: var(--color-ink-4);
+}
+
+.bsheet-input:focus {
+  border-color: var(--color-ink-3);
+}
+
+/* Textarea — reuses existing .textarea base, adds bottom margin fix */
+.bsheet-textarea {
+  background: var(--color-bg);
+}
+
+/* Actions row */
+.bsheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+/* Base sheet button */
+.bsheet-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 48px;
+  border-radius: var(--radius-btn);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s ease;
+}
+
+.bsheet-btn:active {
+  opacity: 0.75;
+}
+
+/* Primary confirm */
+.bsheet-btn--primary {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.bsheet-btn--primary:hover {
+  opacity: 0.88;
+}
+
+/* Danger confirm (archive) */
+.bsheet-btn--danger {
+  background: #7c3b2f;
+  color: #fdf6f3;
+}
+
+.bsheet-btn--danger:hover {
+  opacity: 0.88;
+}
+
+/* Cancel */
+.bsheet-btn--cancel {
+  background: transparent;
+  color: var(--color-ink-3);
+  border: 1px solid var(--color-border-soft);
+}
+
+.bsheet-btn--cancel:hover {
+  border-color: var(--color-border);
+  color: var(--color-ink-2);
+}

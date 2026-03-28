@@ -3,26 +3,30 @@
 import { signOutUser } from '../services/auth.js';
 import { getBannedExercises, getRecentWorkoutSessions, getWorkoutStreak } from '../services/workouts.js';
 import { db } from '../lib/firebase.js';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { showToast } from '../utils.js';
 import {
   notificationsSupported,
   getPermissionState,
   requestPermission,
-  loadReminderPrefs,
+  loadNotificationPrefs,
+  saveMasterEnabled,
   saveReminderEnabled,
   saveReminderTime,
+  saveReminderWindow,
+  saveQuietHours,
+  saveNudgesEnabled,
 } from '../services/notifications.js';
 
 let state = {
-  user: null,
-  container: null,
-  banned: [],
-  sessions: [],
-  streak: 0,
-  nicoAgeMonths: null,
-  reminderEnabled: false,
-  reminderTime: '08:00',
+  user:            null,
+  container:       null,
+  banned:          [],
+  sessions:        [],
+  streak:          0,
+  graceDayUsedOn:  null,
+  nicoAgeMonths:   null,
+  notifPrefs:      null,
   notifPermission: 'default',
 };
 
@@ -50,7 +54,7 @@ function buildStreakDots(sessions, graceDayUsedOn) {
     const date = new Date();
     date.setDate(date.getDate() - daysAgo);
     const dayLabel = date.toLocaleDateString('en-AU', { weekday: 'short' }).slice(0, 1);
-    const isDone = completedKeys.has(dateKey);
+    const isDone  = completedKeys.has(dateKey);
     const isToday = dateKey === todayKey;
     const isGrace = !isDone && dateKey === graceDayUsedOn;
     return { dayLabel, dateKey, isDone, isToday, isGrace };
@@ -71,10 +75,10 @@ function getAgeOptions() {
     if (m < 12) {
       label = `${m} month${m === 1 ? '' : 's'}`;
     } else {
-      const y = Math.floor(m / 12);
+      const y   = Math.floor(m / 12);
       const rem = m % 12;
       if (rem === 0) label = `${y} year${y === 1 ? '' : 's'}`;
-      else label = `${y}y ${rem}m`;
+      else           label = `${y}y ${rem}m`;
     }
     opts.push({ value: m, label });
   }
@@ -84,13 +88,13 @@ function getAgeOptions() {
 // ─── Notification card HTML ───────────────────────────────────────────────────
 
 function renderNotificationCard() {
-  const { reminderEnabled, reminderTime, notifPermission } = state;
+  const { notifPrefs, notifPermission } = state;
   const supported = notificationsSupported();
 
   if (!supported) {
     return `
       <section class="card mt-3">
-        <p class="card-label">Daily reminder</p>
+        <p class="card-label">Notifications</p>
         <p class="card-body mt-2">Push notifications aren&#39;t supported in this browser. Try adding Grounded to your home screen and opening it from there.</p>
       </section>
     `;
@@ -99,12 +103,12 @@ function renderNotificationCard() {
   if (notifPermission === 'denied') {
     return `
       <section class="card mt-3">
-        <p class="card-label">Daily reminder</p>
+        <p class="card-label">Notifications</p>
         <p class="card-body mt-2">Notifications are blocked. To enable them, open your browser settings and allow notifications for this site, then toggle back on here.</p>
         <div class="notif-row mt-3">
-          <span class="notif-label">Reminders</span>
+          <span class="notif-label">Enable notifications</span>
           <label class="notif-toggle notif-toggle--disabled" aria-label="Notifications blocked">
-            <input type="checkbox" id="reminderToggle" disabled />
+            <input type="checkbox" id="masterToggle" disabled />
             <span class="notif-toggle-track"></span>
           </label>
         </div>
@@ -112,32 +116,110 @@ function renderNotificationCard() {
     `;
   }
 
+  const {
+    masterEnabled,
+    reminderEnabled,
+    reminderTime,
+    reminderWindowStart,
+    reminderWindowEnd,
+    quietHoursEnabled,
+    quietHoursStart,
+    quietHoursEnd,
+    nudgesEnabled,
+  } = notifPrefs;
+
   return `
     <section class="card mt-3">
-      <p class="card-label">Daily reminder</p>
-      <p class="card-body mt-1">A gentle nudge to check in. Only sent if you haven&#39;t opened the app yet that day.</p>
+      <p class="card-label">Notifications</p>
+      <p class="card-body mt-1">A calm nudge when it&#39;s useful — never noisy.</p>
 
+      <!-- Master toggle -->
       <div class="notif-row mt-3">
-        <span class="notif-label">Reminders</span>
-        <label class="notif-toggle" aria-label="Toggle daily reminder">
-          <input type="checkbox" id="reminderToggle" ${reminderEnabled ? 'checked' : ''} />
+        <span class="notif-label">Enable notifications</span>
+        <label class="notif-toggle" aria-label="Toggle notifications">
+          <input type="checkbox" id="masterToggle" ${masterEnabled ? 'checked' : ''} />
           <span class="notif-toggle-track"></span>
         </label>
       </div>
 
-      <div class="notif-time-row ${reminderEnabled ? '' : 'notif-time-row--hidden'}" id="notifTimeRow">
-        <span class="notif-time-label">Reminder time</span>
-        <input
-          type="time"
-          id="reminderTime"
-          class="notif-time-input"
-          value="${reminderTime}"
-        />
-      </div>
-
-      ${notifPermission === 'default' && !reminderEnabled ? `
-        <p class="notif-hint mt-2">Toggling on will ask for notification permission.</p>
+      ${notifPermission === 'default' && !masterEnabled ? `
+        <p class="notif-hint mt-2">Toggling on will ask for permission.</p>
       ` : ''}
+
+      <!-- Expandable detail — only visible when master is on -->
+      <div id="notifDetail" class="notif-detail ${masterEnabled ? '' : 'notif-detail--hidden'}">
+
+        <!-- Daily reminder -->
+        <div class="notif-section-divider mt-3"></div>
+        <p class="notif-section-label mt-3">Daily reminder</p>
+
+        <div class="notif-row mt-2">
+          <span class="notif-label">Send a reminder</span>
+          <label class="notif-toggle" aria-label="Toggle daily reminder">
+            <input type="checkbox" id="reminderToggle" ${reminderEnabled ? 'checked' : ''} />
+            <span class="notif-toggle-track"></span>
+          </label>
+        </div>
+
+        <div id="reminderTimeRow" class="notif-time-row ${reminderEnabled ? '' : 'notif-time-row--hidden'}">
+          <span class="notif-time-label">Reminder time</span>
+          <input type="time" id="reminderTime" class="notif-time-input" value="${reminderTime}" />
+        </div>
+
+        <!-- Reminder window -->
+        <div class="notif-section-divider mt-3"></div>
+        <p class="notif-section-label mt-3">Reminder window</p>
+        <p class="notif-hint mt-1">Only send reminders within this window.</p>
+
+        <div class="notif-time-pair mt-2">
+          <div class="notif-time-item">
+            <span class="notif-time-label">From</span>
+            <input type="time" id="reminderWindowStart" class="notif-time-input" value="${reminderWindowStart}" />
+          </div>
+          <div class="notif-time-item">
+            <span class="notif-time-label">Until</span>
+            <input type="time" id="reminderWindowEnd" class="notif-time-input" value="${reminderWindowEnd}" />
+          </div>
+        </div>
+
+        <!-- Quiet hours -->
+        <div class="notif-section-divider mt-3"></div>
+        <p class="notif-section-label mt-3">Quiet hours</p>
+        <p class="notif-hint mt-1">No notifications during these hours.</p>
+
+        <div class="notif-row mt-2">
+          <span class="notif-label">Quiet hours</span>
+          <label class="notif-toggle" aria-label="Toggle quiet hours">
+            <input type="checkbox" id="quietHoursToggle" ${quietHoursEnabled ? 'checked' : ''} />
+            <span class="notif-toggle-track"></span>
+          </label>
+        </div>
+
+        <div id="quietHoursTimeRow" class="notif-time-pair ${quietHoursEnabled ? '' : 'notif-time-row--hidden'}">
+          <div class="notif-time-item">
+            <span class="notif-time-label">From</span>
+            <input type="time" id="quietHoursStart" class="notif-time-input" value="${quietHoursStart}" />
+          </div>
+          <div class="notif-time-item">
+            <span class="notif-time-label">Until</span>
+            <input type="time" id="quietHoursEnd" class="notif-time-input" value="${quietHoursEnd}" />
+          </div>
+        </div>
+
+        <!-- Nudges -->
+        <div class="notif-section-divider mt-3"></div>
+        <p class="notif-section-label mt-3">Nudges</p>
+        <p class="notif-hint mt-1">Occasional check-ins based on how your day is going. Coming soon.</p>
+
+        <div class="notif-row mt-2">
+          <span class="notif-label">Behaviour nudges</span>
+          <label class="notif-toggle" aria-label="Toggle behaviour nudges">
+            <input type="checkbox" id="nudgesToggle" ${nudgesEnabled ? 'checked' : ''} />
+            <span class="notif-toggle-track"></span>
+          </label>
+        </div>
+
+      </div>
     </section>
   `;
 }
@@ -146,11 +228,11 @@ function renderNotificationCard() {
 
 function render() {
   const { user, banned, sessions, streak, graceDayUsedOn, nicoAgeMonths } = state;
-  const firstName = user.displayName?.split(' ')[0] || 'there';
+  const firstName    = user.displayName?.split(' ')[0] || 'there';
   const completedCount = sessions.filter(s => s.status === 'complete').length;
-  const dots = buildStreakDots(sessions, graceDayUsedOn);
-  const streakCopy = getStreakCopy(streak);
-  const ageOptions = getAgeOptions();
+  const dots         = buildStreakDots(sessions, graceDayUsedOn);
+  const streakCopy   = getStreakCopy(streak);
+  const ageOptions   = getAgeOptions();
 
   state.container.innerHTML = `
     <main class="view-scroll">
@@ -205,7 +287,9 @@ function render() {
             ${dots.map(dot => `
               <div class="streak-dot-col ${dot.isToday ? 'streak-dot-col--today' : ''}">
                 <div class="streak-dot ${dot.isDone ? 'streak-dot--done' : dot.isGrace ? 'streak-dot--grace' : dot.isToday ? 'streak-dot--today' : 'streak-dot--empty'}">
-                  ${dot.isDone ? '<span class="streak-dot-check">\u2713</span>' : dot.isGrace ? '<span class="streak-dot-check streak-dot-check--grace">~</span>' : ''}
+                  ${dot.isDone  ? '<span class="streak-dot-check">\u2713</span>'
+                  : dot.isGrace ? '<span class="streak-dot-check streak-dot-check--grace">~</span>'
+                  : ''}
                 </div>
                 <p class="streak-dot-label">${dot.dayLabel}</p>
               </div>
@@ -216,7 +300,7 @@ function render() {
           ` : ''}
         </section>
 
-        <!-- Daily reminder -->
+        <!-- Notifications -->
         ${renderNotificationCard()}
 
         <!-- Nico settings -->
@@ -284,10 +368,13 @@ function render() {
 // ─── Bind events ──────────────────────────────────────────────────────────────
 
 function bindEvents() {
+
+  // ── Sign out ──
   document.getElementById('signOutBtn')?.addEventListener('click', async () => {
     await signOutUser();
   });
 
+  // ── Unban exercises ──
   document.querySelectorAll('[data-unban-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.unbanId;
@@ -300,12 +387,11 @@ function bindEvents() {
     });
   });
 
-  // Nico age select
+  // ── Nico age ──
   document.getElementById('nicoAgeSelect')?.addEventListener('change', async (e) => {
-    const raw = e.target.value;
+    const raw    = e.target.value;
     const newAge = raw === '' ? null : Number(raw);
     state.nicoAgeMonths = newAge;
-
     try {
       await setDoc(doc(db, 'users', state.user.uid), {
         nicoAgeMonths: newAge,
@@ -317,63 +403,152 @@ function bindEvents() {
     }
   });
 
-  // Reminder toggle
-  const reminderToggle = document.getElementById('reminderToggle');
-  const timeRow = document.getElementById('notifTimeRow');
+  // ── DOM helpers ──
+  function setVisible(el, visible) {
+    if (!el) return;
+    if (visible) el.classList.remove('notif-detail--hidden', 'notif-time-row--hidden');
+    else         el.classList.add(el.id === 'notifDetail' ? 'notif-detail--hidden' : 'notif-time-row--hidden');
+  }
 
-  reminderToggle?.addEventListener('change', async (e) => {
+  // ── Master toggle ──
+  document.getElementById('masterToggle')?.addEventListener('change', async (e) => {
     const enabling = e.target.checked;
 
     if (enabling) {
-      // Request permission first
-      const permission = await requestPermission();
-      state.notifPermission = permission;
+      const current = Notification.permission;
 
-      if (permission === 'denied') {
-        showToast('Notifications are blocked. Enable them in browser settings.', 'error', 5000);
+      // Already denied at the OS/browser level — cannot request again.
+      if (current === 'denied') {
+        showToast(
+          'Notifications are blocked in your browser. You can enable them in browser settings.',
+          'error',
+          6000,
+        );
         e.target.checked = false;
-        render(); // re-render to show denied state
+        // Re-render so the card switches to the blocked state.
+        state.notifPermission = 'denied';
+        render();
         return;
       }
 
-      if (permission !== 'granted') {
-        showToast('Permission not granted.', 'error', 3000);
-        e.target.checked = false;
-        return;
+      // Not yet decided — ask the user now (only triggered by this interaction).
+      if (current === 'default') {
+        const result = await requestPermission();
+        state.notifPermission = result;
+
+        if (result === 'granted') {
+          // Permission granted — fall through to save below.
+        } else if (result === 'denied') {
+          showToast(
+            'Notifications are blocked in your browser. You can enable them in browser settings.',
+            'error',
+            6000,
+          );
+          e.target.checked = false;
+          render();
+          return;
+        } else {
+          // User dismissed the prompt without choosing ('default' returned again).
+          showToast('Notifications weren\'t enabled — you can try again any time.', 'error', 4000);
+          e.target.checked = false;
+          return;
+        }
       }
+
+      // current === 'granted' falls straight through here with no prompt needed.
     }
 
-    // Update state and show/hide time row
-    state.reminderEnabled = enabling;
-    if (timeRow) {
-      if (enabling) {
-        timeRow.classList.remove('notif-time-row--hidden');
-      } else {
-        timeRow.classList.add('notif-time-row--hidden');
-      }
-    }
+    state.notifPrefs.masterEnabled = enabling;
+    setVisible(document.getElementById('notifDetail'), enabling);
 
-    // Save to Firestore
     try {
-      await saveReminderEnabled(state.user.uid, enabling, state.reminderTime);
-      showToast(
-        enabling ? 'Daily reminder on \u2713' : 'Reminder turned off',
-        'success',
-        2500
-      );
+      await saveMasterEnabled(state.user.uid, enabling);
+      showToast(enabling ? 'Notifications on \u2713' : 'Notifications off', 'success', 2500);
     } catch {
       showToast('Couldn\'t save \u2014 check your connection', 'error', 4000);
     }
   });
 
-  // Reminder time input
-  document.getElementById('reminderTime')?.addEventListener('change', async (e) => {
-    const newTime = e.target.value;
-    state.reminderTime = newTime;
-
+  // ── Reminder toggle ──
+  document.getElementById('reminderToggle')?.addEventListener('change', async (e) => {
+    const enabling = e.target.checked;
+    state.notifPrefs.reminderEnabled = enabling;
+    setVisible(document.getElementById('reminderTimeRow'), enabling);
     try {
-      await saveReminderTime(state.user.uid, newTime, state.reminderEnabled);
+      await saveReminderEnabled(state.user.uid, enabling);
+      showToast(enabling ? 'Daily reminder on \u2713' : 'Reminder off', 'success', 2500);
+    } catch {
+      showToast('Couldn\'t save \u2014 check your connection', 'error', 4000);
+    }
+  });
+
+  // ── Reminder time ──
+  document.getElementById('reminderTime')?.addEventListener('change', async (e) => {
+    const time = e.target.value;
+    state.notifPrefs.reminderTime = time;
+    try {
+      await saveReminderTime(state.user.uid, time);
       showToast('Reminder time updated \u2713', 'success', 2000);
+    } catch {
+      showToast('Couldn\'t save \u2014 check your connection', 'error', 4000);
+    }
+  });
+
+  // ── Reminder window ──
+  function bindPairChange(startId, endId, onSave) {
+    const save = async () => {
+      const start = document.getElementById(startId)?.value;
+      const end   = document.getElementById(endId)?.value;
+      if (!start || !end) return;
+      try {
+        await onSave(start, end);
+        showToast('Saved \u2713', 'success', 2000);
+      } catch {
+        showToast('Couldn\'t save \u2014 check your connection', 'error', 4000);
+      }
+    };
+    document.getElementById(startId)?.addEventListener('change', save);
+    document.getElementById(endId)?.addEventListener('change', save);
+  }
+
+  bindPairChange('reminderWindowStart', 'reminderWindowEnd', async (start, end) => {
+    state.notifPrefs.reminderWindowStart = start;
+    state.notifPrefs.reminderWindowEnd   = end;
+    await saveReminderWindow(state.user.uid, start, end);
+  });
+
+  // ── Quiet hours toggle ──
+  document.getElementById('quietHoursToggle')?.addEventListener('change', async (e) => {
+    const enabling = e.target.checked;
+    state.notifPrefs.quietHoursEnabled = enabling;
+    setVisible(document.getElementById('quietHoursTimeRow'), enabling);
+    try {
+      await saveQuietHours(
+        state.user.uid,
+        enabling,
+        state.notifPrefs.quietHoursStart,
+        state.notifPrefs.quietHoursEnd,
+      );
+      showToast(enabling ? 'Quiet hours on \u2713' : 'Quiet hours off', 'success', 2000);
+    } catch {
+      showToast('Couldn\'t save \u2014 check your connection', 'error', 4000);
+    }
+  });
+
+  // ── Quiet hours times ──
+  bindPairChange('quietHoursStart', 'quietHoursEnd', async (start, end) => {
+    state.notifPrefs.quietHoursStart = start;
+    state.notifPrefs.quietHoursEnd   = end;
+    await saveQuietHours(state.user.uid, state.notifPrefs.quietHoursEnabled, start, end);
+  });
+
+  // ── Nudges toggle ──
+  document.getElementById('nudgesToggle')?.addEventListener('change', async (e) => {
+    const enabling = e.target.checked;
+    state.notifPrefs.nudgesEnabled = enabling;
+    try {
+      await saveNudgesEnabled(state.user.uid, enabling);
+      showToast(enabling ? 'Nudges on \u2713' : 'Nudges off', 'success', 2000);
     } catch {
       showToast('Couldn\'t save \u2014 check your connection', 'error', 4000);
     }
@@ -386,23 +561,23 @@ export const ProfileView = {
   async init(container, user) {
     container.innerHTML = '<div class="loading-state"><p>Loading profile\u2026</p></div>';
 
-    const [banned, sessions, streakResult, reminderPrefs] = await Promise.all([
+    const [banned, sessions, streakResult, notifPrefs] = await Promise.all([
       getBannedExercises(user.uid),
       getRecentWorkoutSessions(user.uid, 30),
       getWorkoutStreak(user.uid),
-      loadReminderPrefs(user.uid),
+      loadNotificationPrefs(user.uid),
     ]);
 
     const { streak, graceDayUsedOn } = streakResult;
 
-    // Load user doc for nicoAgeMonths
     let nicoAgeMonths = null;
     try {
-      const { getDoc } = await import('firebase/firestore');
       const snap = await getDoc(doc(db, 'users', user.uid));
       if (snap.exists()) {
         const d = snap.data();
-        nicoAgeMonths = (d.nicoAgeMonths !== undefined && d.nicoAgeMonths !== null) ? Number(d.nicoAgeMonths) : null;
+        nicoAgeMonths = (d.nicoAgeMonths !== undefined && d.nicoAgeMonths !== null)
+          ? Number(d.nicoAgeMonths)
+          : null;
       }
     } catch (_) {}
 
@@ -414,8 +589,7 @@ export const ProfileView = {
       streak,
       graceDayUsedOn,
       nicoAgeMonths,
-      reminderEnabled: reminderPrefs.enabled,
-      reminderTime: reminderPrefs.time,
+      notifPrefs,
       notifPermission: getPermissionState(),
     };
 

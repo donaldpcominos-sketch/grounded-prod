@@ -12,6 +12,7 @@ import { HabitsView } from './views/habits.js';
 import { showOnboardingIfNeeded } from './views/onboarding.js';
 import { db } from './lib/firebase.js';
 import { doc, getDoc } from 'firebase/firestore';
+import { BooksView } from './views/books.js';
 
 registerRoute('today',    TodayView);
 registerRoute('workouts', WorkoutsView);
@@ -19,6 +20,7 @@ registerRoute('shopping', ShoppingView);
 registerRoute('nico',     NicoView);
 registerRoute('profile',  ProfileView);
 registerRoute('habits',   HabitsView);
+registerRoute('books', BooksView);
 
 // ─── PWA: register service worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
