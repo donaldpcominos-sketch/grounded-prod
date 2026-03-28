@@ -3,7 +3,7 @@ import { touchLastActive } from '../services/lastSeen.js';
 import { getSuggestionsForEnergy } from '../data/nutrition.js';
 import { getTodayDisplay, showToast } from '../utils.js';
 import { getWeekSummary } from '../services/progress.js';
-import { fetchWeather, getYesterdaySnapshot } from '../services/weather.js';
+import { fetchWeather } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
 import { HABITS } from '../services/habits.js';
 import { navigateTo } from '../router.js';
@@ -15,7 +15,6 @@ import {
   getReminderDecision,
   getMeaningfulEngagement,
   classifyEngagementState,
-  compareWeather,
   buildWeatherBriefingMessage,
   getWeatherBriefingDecision,
 } from '../domain/notifications.js';
@@ -612,6 +611,9 @@ export const TodayView = {
     // of this session so the manual re-open button can always access it,
     // even after the auto-banner has been dismissed.
     //
+    // The briefing is tomorrow-focused, using forecast[1] from the existing
+    // weather fetch result. No extra network call or localStorage read needed.
+    //
     // It is only populated once per session (on first init after a fresh
     // app open that passes the eligibility gates). On subsequent navigations
     // back to Today, the auto-banner is suppressed (_weatherBriefingDismissed)
@@ -625,9 +627,7 @@ export const TodayView = {
       );
 
       if (briefingDecision.shouldShow) {
-        const yesterday  = getYesterdaySnapshot();
-        const comparison = compareWeather(weather, yesterday);
-        const built      = buildWeatherBriefingMessage(comparison, weather);
+        const built = buildWeatherBriefingMessage(weather);
         if (built) {
           _sessionWeatherBriefing = built;
           // Record immediately so it does not auto-show again today,

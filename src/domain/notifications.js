@@ -260,83 +260,100 @@ export function getReminderDecision(prefs, dailyState, notifState, now = new Dat
   return { shouldSendReminder: true, reason: 'eligible', engagementState, ...message, signals };
 }
 
-// ─── Weather comparison ───────────────────────────────────────────────────────
+// ─── Tomorrow weather comparison ─────────────────────────────────────────────
 //
-// Pure comparison between today's weather data and a yesterday snapshot.
+// Compares tomorrow's forecast against today's forecast using data already
+// present in the fetchWeather() result. No extra network call or localStorage
+// read required — forecast[0] is today, forecast[1] is tomorrow.
 //
-// today:     object returned by fetchWeather() from weather.js.
-//            Required fields: currentTemp (number), rainExpected (boolean).
-// yesterday: object returned by getYesterdaySnapshot() from weather.js.
-//            Shape: { temp, high, low, rainExpected }.
-//            May be null — callers must handle the null return.
+// weather: object returned by fetchWeather().
+//          Required field: forecast — array of at least 2 entries, each with
+//          { high, low, desc, emoji } as built by weather.js.
 //
 // Returns:
 // {
-//   tempDelta:    number,                    // today.currentTemp - yesterday.temp
-//   direction:    'warmer' | 'cooler' | 'similar',
-//   rainExpected: boolean,                   // from today's daily weather code
+//   tomorrowHigh:   number,
+//   tomorrowLow:    number,
+//   tomorrowDesc:   string,
+//   tempDelta:      number,   // tomorrow.high - today.high (rounded)
+//   direction:      'warmer' | 'cooler' | 'similar',
+//   rainExpected:   boolean,  // derived from tomorrow's desc label
 // }
-// Returns null if either argument is missing or malformed.
+// Returns null if forecast data is insufficient.
 
-export function compareWeather(today, yesterday) {
-  if (!today || typeof today.currentTemp !== 'number') return null;
-  if (!yesterday || typeof yesterday.temp !== 'number') return null;
+export function compareTomorrow(weather) {
+  const today    = weather?.forecast?.[0];
+  const tomorrow = weather?.forecast?.[1];
 
-  const tempDelta = Math.round(today.currentTemp - yesterday.temp);
+  if (!today    || typeof today.high    !== 'number') return null;
+  if (!tomorrow || typeof tomorrow.high !== 'number') return null;
+
+  const tempDelta = Math.round(tomorrow.high - today.high);
 
   let direction = 'similar';
   if (tempDelta >= 2)       direction = 'warmer';
   else if (tempDelta <= -2) direction = 'cooler';
 
+  // Rain detection from the forecast description label (set by describeWeatherCode
+  // in weather.js). Checking the label is reliable here because the label and
+  // the underlying WMO code are in 1:1 correspondence — weather.js owns both.
+  const rainLabels = new Set(['Drizzle', 'Rain', 'Rain showers', 'Snow', 'Snow showers', 'Thunderstorm']);
+  const rainExpected = rainLabels.has(tomorrow.desc);
+
   return {
+    tomorrowHigh: tomorrow.high,
+    tomorrowLow:  tomorrow.low,
+    tomorrowDesc: tomorrow.desc,
     tempDelta,
     direction,
-    rainExpected: Boolean(today.rainExpected),
+    rainExpected,
   };
 }
 
 // ─── Weather briefing message builder ────────────────────────────────────────
 //
 // Builds the headline and body copy for the weather briefing banner.
+// Focused entirely on tomorrow — the weather card already shows today.
 //
-// comparison: result of compareWeather() — may be null (no yesterday data).
-// today:      result of fetchWeather() — may be null.
+// weather: result of fetchWeather() — may be null.
 //
-// Returns: { headline, body } or null if today data is missing.
+// Returns: { headline, body } or null if forecast data is insufficient.
 //
-// Tone: factual, concise, no emoji in text strings.
+// Tone: factual, planning-oriented, concise. No emoji in text strings.
+// Examples:
+//   "Tomorrow looks warmer — high of 28°."
+//   "Rain likely tomorrow. Worth planning around it."
+//   "Tomorrow will be 4° cooler than today — worth packing a layer."
 
-export function buildWeatherBriefingMessage(comparison, today) {
-  if (!today || typeof today.currentTemp !== 'number') return null;
+export function buildWeatherBriefingMessage(weather) {
+  const comparison = compareTomorrow(weather);
+  if (!comparison) return null;
 
-  const headline = `${today.currentTemp}° · ${today.currentDesc}`;
+  const { tomorrowHigh, direction, tempDelta, rainExpected } = comparison;
+  const absDelta = Math.abs(tempDelta);
 
-  const parts = [];
-
-  if (comparison) {
-    const { direction, tempDelta } = comparison;
-    const absDelta = Math.abs(tempDelta);
-    if (direction === 'warmer') {
-      parts.push(`${absDelta}° warmer than yesterday.`);
-    } else if (direction === 'cooler') {
-      parts.push(`${absDelta}° cooler than yesterday.`);
-    }
-    // 'similar' — no temp comparison line; falls through to rain or walk window.
-  }
-
-  if (today.rainExpected) {
-    parts.push('Rain expected today.');
-  }
-
-  let body;
-  if (parts.length > 0) {
-    body = parts.join(' ');
-  } else if (today.walkWindow) {
-    // Strip the leading emoji and space from the walk window string.
-    // e.g. "🐾 Good morning walk window: 6am–9am" → "Good morning walk window: 6am–9am"
-    body = today.walkWindow.replace(/^\S+\s/, '');
+  // Headline: tomorrow's high with a direction note.
+  let headline;
+  if (direction === 'warmer') {
+    headline = `Tomorrow looks warmer — high of ${tomorrowHigh}°.`;
+  } else if (direction === 'cooler') {
+    headline = `Tomorrow will be cooler — high of ${tomorrowHigh}°.`;
   } else {
-    body = 'Check the forecast before heading out.';
+    headline = `Tomorrow looks similar to today — high of ${tomorrowHigh}°.`;
+  }
+
+  // Body: the most useful planning signal available.
+  let body;
+  if (rainExpected && direction === 'cooler') {
+    body = `${absDelta}° cooler than today, with rain likely. Worth packing a layer.`;
+  } else if (rainExpected) {
+    body = 'Rain likely tomorrow. Worth planning around it.';
+  } else if (direction === 'warmer') {
+    body = `${absDelta}° warmer than today — a good day to get outside.`;
+  } else if (direction === 'cooler') {
+    body = `${absDelta}° cooler than today — worth packing a layer.`;
+  } else {
+    body = 'No major change expected. Check the forecast for details.';
   }
 
   return { headline, body };
