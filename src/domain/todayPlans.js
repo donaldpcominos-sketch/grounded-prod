@@ -26,6 +26,9 @@ export function durationToMinutes(duration) {
 // Fields:
 //   parentEnergy    — 'good' | 'low' | 'depleted' | 'solo'
 //   babyState       — 'happy' | 'fussy' | 'tired' | 'just-woke' | 'due-nap-soon'
+//   withNico        — boolean (true = Nico is coming)
+//   outingFocus     — 'nico' | 'me' | 'both'
+//   foodIntent      — 'required' | 'nice' | 'none'
 //   weather         — 'sunny' | 'cloudy' | 'hot' | 'rainy'
 //   duration        — '30min' | '1hr' | '2hr' | 'open'
 //   vibe            — 'home' | 'out' | 'calm' | 'active'
@@ -48,6 +51,11 @@ export function buildPlanContext(answers, profile, weatherData) {
     vibe:            answers.vibe            || 'out',
     travelTolerance: answers.travelTolerance || null,
     priority:        answers.priority        || 'easy',
+
+    // Outing intent signals
+    withNico:    answers.withNico    ?? true,
+    outingFocus: answers.outingFocus || 'both',
+    foodIntent:  answers.foodIntent  || 'nice',
 
     // Holiday context — stored for AI copy layer, not used in deterministic scoring
     location:        answers.location        || null,
@@ -150,10 +158,13 @@ function isEligible(candidate, context) {
   // Weather gate — hard-exclude outdoor-only places in rain
   if (context.weather === 'rainy' && candidate.indoorOutdoor === 'outdoor') return false;
 
-  // Nap-timing gate — exclude high-energy or far places when nap is imminent
-  if (context.priority === 'nap-timing' || context.babyState === 'due-nap-soon') {
-    if (candidate.energyRequired === 'high') return false;
-    if ((candidate.driveMinutes ?? 0) > 20)  return false;
+  // Nap-timing gate — exclude high-energy or far places when nap is imminent.
+  // Only applies when Nico is actually coming.
+  if (context.withNico !== false) {
+    if (context.priority === 'nap-timing' || context.babyState === 'due-nap-soon') {
+      if (candidate.energyRequired === 'high') return false;
+      if ((candidate.driveMinutes ?? 0) > 20)  return false;
+    }
   }
 
   // Travel tolerance gate
@@ -219,8 +230,45 @@ function computeScore(candidate, context) {
   if (candidate.energyRequired === parentLevel) score += 3;
 
   // ── Baby state alignment (+3) ─────────────────────────────────────────────
-  const babyLevel = babyStateToEnergy(context.babyState);
-  if (candidate.energyRequired === babyLevel) score += 3;
+  // Skipped when Nico is not coming — his state shouldn't constrain the ranking.
+  if (context.withNico !== false) {
+    const babyLevel = babyStateToEnergy(context.babyState);
+    if (candidate.energyRequired === babyLevel) score += 3;
+  }
+
+  // ── Outing focus signal ───────────────────────────────────────────────────
+  // Shifts the ranking toward child-friendly ease (nico), personal quality
+  // (me), or balances both (both — no additional bias).
+  if (context.outingFocus === 'nico') {
+    // Favour low-energy, calm, child-friendly places
+    if (candidate.energyRequired === 'low')       score += 3;
+    if (candidate.tags?.includes('calm'))         score += 2;
+    if (candidate.tags?.includes('easy'))         score += 2;
+    if (candidate.tags?.includes('active') &&
+        candidate.energyRequired !== 'high')      score += 1; // active but not exhausting
+    if (candidate.energyRequired === 'high')      score -= 2; // penalise high-demand places
+  }
+  if (context.outingFocus === 'me') {
+    // Favour quality, scenic, calm, cultural, and food places
+    if (candidate.tags?.includes('scenic'))       score += 3;
+    if (candidate.tags?.includes('food'))         score += 2;
+    if (candidate.tags?.includes('calm'))         score += 2;
+    if (candidate.tags?.includes('cultural'))     score += 2;
+    if (candidate.rating && candidate.rating >= 4.5) score += 2; // quality matters more
+  }
+  // outingFocus === 'both' → no additional bias; existing signals handle it
+
+  // ── Food intent signal ────────────────────────────────────────────────────
+  // Adjusts how strongly food-tagged places are preferred or deprioritised.
+  // Does not hard-exclude anything — soft signals only.
+  if (context.foodIntent === 'required') {
+    if (candidate.tags?.includes('food'))         score += 6; // strong boost — food is a must
+    else                                          score -= 3; // non-food places are less useful
+  }
+  if (context.foodIntent === 'none') {
+    if (candidate.subtype === 'cafe')             score -= 3; // cafés less relevant without food intent
+  }
+  // foodIntent === 'nice' → no adjustment; food is welcome but not driving
 
   // ── Proximity bonus ───────────────────────────────────────────────────────
   if (candidate.walkable) score += 2;
@@ -254,7 +302,9 @@ function computeScore(candidate, context) {
   if (context.parentEnergy === 'solo' && candidate.walkable) score += 2;
 
   // ── Fussy / tired / nap-due baby: calm preference ────────────────────────
-  if (['fussy', 'tired', 'due-nap-soon'].includes(context.babyState) &&
+  // Only applies when Nico is coming.
+  if (context.withNico !== false &&
+      ['fussy', 'tired', 'due-nap-soon'].includes(context.babyState) &&
       candidate.tags?.includes('calm')) {
     score += 2;
   }
@@ -275,57 +325,225 @@ export function scoreCandidates(candidates, context) {
 
 // ─── whyNow generator ─────────────────────────────────────────────────────────
 // Deterministic, context-driven one-liner. Factual signals only — nothing invented.
+// Design: each role branch fires a primary line (always), then optionally a
+// secondary qualifier. Universal fallback only fires when role logic produces
+// nothing at all, which should be rare.
 
 export function buildWhyNow(candidate, context, role) {
+  const tags = candidate.tags || [];
   const parts = [];
 
+  // ── SAFEST: lead with proximity, qualify with effort level ────────────────
   if (role === 'safest') {
-    if (candidate.walkable)
+    // Primary — proximity
+    if (candidate.walkable) {
       parts.push('a short walk away');
-    else if ((candidate.driveMinutes ?? 30) <= 10)
+    } else if ((candidate.driveMinutes ?? 30) <= 10) {
       parts.push('just a few minutes away');
-    if (['depleted', 'solo'].includes(context.parentEnergy))
-      parts.push('low effort');
-    else if (candidate.energyRequired === 'low')
-      parts.push('easy and relaxed');
+    } else if (candidate.energyRequired === 'low') {
+      parts.push('low effort to get to');
+    } else {
+      parts.push('easy to reach');
+    }
+
+    // Secondary — energy qualifier
+    if (['depleted', 'solo'].includes(context.parentEnergy)) {
+      parts.push('minimal effort needed');
+    } else if (['fussy', 'tired', 'due-nap-soon'].includes(context.babyState)) {
+      parts.push('gentle on a tricky moment');
+    } else if (candidate.energyRequired === 'low') {
+      parts.push('relaxed pace');
+    }
   }
 
+  // ── BEST: lead with priority match, qualify with context signal ───────────
   if (role === 'best') {
-    if      (context.priority === 'food'     && candidate.tags?.includes('food'))     parts.push('matches your food priority');
-    else if (context.priority === 'scenic'   && candidate.tags?.includes('scenic'))   parts.push('a beautiful setting');
-    else if (context.priority === 'quiet'    && candidate.tags?.includes('quiet'))    parts.push('calm and low stimulation');
-    else if (context.priority === 'active'   && candidate.tags?.includes('active'))   parts.push('good energy outlet');
-    else if (context.priority === 'cultural' && candidate.tags?.includes('cultural')) parts.push('something interesting to explore');
-    else if (context.priority === 'nap-timing')                                       parts.push('easy to wrap up when needed');
-
-    if (context.hasGoodWalkWindow && candidate.indoorOutdoor === 'outdoor' && parts.length === 0) {
+    // Primary — priority alignment (covers all PRIORITY_VALUES)
+    if (context.priority === 'food' && tags.includes('food')) {
+      parts.push('good for food');
+    } else if (context.priority === 'scenic' && tags.includes('scenic')) {
+      parts.push('a beautiful setting');
+    } else if (context.priority === 'quiet' && tags.includes('quiet')) {
+      parts.push('calm and low stimulation');
+    } else if (context.priority === 'active' && tags.includes('active')) {
+      parts.push('lets you both move');
+    } else if (context.priority === 'cultural' && tags.includes('cultural')) {
+      parts.push('something interesting to explore');
+    } else if (context.priority === 'nap-timing') {
+      parts.push('easy to wrap up when needed');
+    } else if (context.priority === 'easy' && candidate.energyRequired === 'low') {
+      parts.push('low effort, low fuss');
+    } else if (context.hasGoodWalkWindow && candidate.indoorOutdoor === 'outdoor') {
       parts.push('good conditions right now');
+    } else {
+      // Subtype-level fallback so this branch always fires something meaningful
+      const subtypeLine = {
+        cafe:               'good for a slow sit-down',
+        park:               'fresh air and open space',
+        library:            'calm and contained',
+        aquarium:           'engaging for Nico',
+        zoo:                'lots to look at',
+        museum:             'interesting for both of you',
+        shopping:           'easy to wander through',
+        'play-centre':      'built for kids',
+        pool:               'good water time',
+        spa:                'easy and restorative',
+        attraction:         'worth the trip',
+        'indoor-entertainment': 'contained and easy',
+        landmark:           'a nice change of scene',
+      }[candidate.subtype] || 'a solid fit for today';
+      parts.push(subtypeLine);
     }
-    if (candidate.rating && candidate.rating >= 4.6 && parts.length < 2) {
+
+    // Secondary — high rating worth mentioning
+    if (candidate.rating && candidate.rating >= 4.6) {
       parts.push('highly rated');
     }
   }
 
+  // ── FALLBACK: lead with contrast signal vs the other two options ──────────
   if (role === 'fallback') {
-    if      (candidate.indoorOutdoor === 'indoor' && context.weather === 'rainy') parts.push('stays dry if the weather turns');
-    else if (candidate.indoorOutdoor === 'indoor' && context.weather === 'hot')   parts.push('cool and air-conditioned');
-    else if (candidate.tags?.includes('easy'))                                     parts.push('low-key, no pressure');
+    // Primary — contrast with weather, baby state, or subtype character
+    if (candidate.indoorOutdoor === 'indoor' && context.weather === 'rainy') {
+      parts.push('keeps you dry');
+    } else if (candidate.indoorOutdoor === 'indoor' && context.weather === 'hot') {
+      parts.push('cool and air-conditioned');
+    } else if (candidate.indoorOutdoor === 'outdoor' && ['sunny', 'cloudy'].includes(context.weather)) {
+      parts.push('good conditions for being outside');
+    } else if (tags.includes('quiet')) {
+      parts.push('quieter than the others');
+    } else if (tags.includes('food')) {
+      parts.push('adds a food stop');
+    } else if (candidate.walkable) {
+      parts.push('no driving needed');
+    } else {
+      const subtypeLine = {
+        cafe:               'a sit-down option',
+        park:               'fresh air option',
+        library:            'quiet indoor option',
+        aquarium:           'contained indoor option',
+        zoo:                'outdoor option with lots to see',
+        museum:             'indoor option with something to explore',
+        shopping:           'indoor wander option',
+        'play-centre':      'dedicated play option',
+        pool:               'water option',
+        spa:                'calm option',
+        attraction:         'a different kind of outing',
+        'indoor-entertainment': 'easy indoor option',
+        landmark:           'a change of scene',
+      }[candidate.subtype] || 'a different kind of option';
+      parts.push(subtypeLine);
+    }
+
+    // Secondary — baby or parent qualifier
+    if (['fussy', 'tired', 'due-nap-soon'].includes(context.babyState) && tags.includes('calm')) {
+      parts.push('gentle for right now');
+    } else if (context.parentEnergy === 'solo' && candidate.walkable) {
+      parts.push('manageable on your own');
+    }
   }
 
-  // Universal fallbacks when no specific line has fired
+  // Universal fallback — should rarely fire given the branches above
   if (parts.length === 0) {
-    if (['fussy', 'tired', 'due-nap-soon'].includes(context.babyState))
-      parts.push('gentle option for a tricky moment');
-    else if (context.parentEnergy === 'solo')
-      parts.push('manageable on your own');
-    else if (candidate.tags?.includes('scenic'))
-      parts.push('beautiful spot nearby');
-    else
-      parts.push('a good fit for right now');
+    parts.push('a good fit for right now');
   }
 
   const line = parts.slice(0, 2).join(' · ');
   return line.charAt(0).toUpperCase() + line.slice(1) + '.';
+}
+
+// ─── Plan title generator ─────────────────────────────────────────────────────
+// Generates a short action-framed title that describes the *plan*, not just
+// the place. e.g. "Easy coffee stop" rather than raw place name.
+// Used as rec.planTitle — the view renders it above rec.name.
+
+export function buildPlanTitle(candidate, context, role) {
+  const tags = candidate.tags || [];
+  const sub  = candidate.subtype;
+
+  // ── SAFEST: frame around ease and proximity ───────────────────────────────
+  if (role === 'safest') {
+    if (sub === 'cafe') {
+      return candidate.walkable ? 'Easy coffee stop' : 'Low-key café stop';
+    }
+    if (sub === 'park') {
+      return candidate.walkable ? 'Short walk nearby' : 'Quick outdoor reset';
+    }
+    if (sub === 'library')  return 'Calm indoor option';
+    if (sub === 'shopping') return 'Easy indoor wander';
+    if (sub === 'spa')      return 'Low-effort rest stop';
+    if (sub === 'aquarium') return 'Calm indoor outing';
+    if (sub === 'museum')   return 'Relaxed indoor visit';
+    if (sub === 'pool')     return 'Easy water time';
+    if (sub === 'play-centre') return 'Easy play stop';
+
+    // Generic safest fallback
+    return candidate.walkable ? 'Easy option nearby' : 'Low-effort option';
+  }
+
+  // ── BEST: frame around the priority or the place's strongest character ────
+  if (role === 'best') {
+    if (context.priority === 'food' && tags.includes('food')) {
+      return sub === 'cafe' ? 'Good café stop' : 'Food-first option';
+    }
+    if (context.priority === 'scenic' && tags.includes('scenic')) {
+      return 'Beautiful spot nearby';
+    }
+    if (context.priority === 'quiet' && tags.includes('quiet')) {
+      return sub === 'library' ? 'Quiet library visit' : 'Quiet, calm option';
+    }
+    if (context.priority === 'active' && tags.includes('active')) {
+      return sub === 'park' ? 'Active park outing' : 'Get moving option';
+    }
+    if (context.priority === 'cultural' && tags.includes('cultural')) {
+      return sub === 'museum' ? 'Museum visit' : 'Something interesting nearby';
+    }
+    if (context.priority === 'nap-timing') {
+      return 'Nap-friendly option';
+    }
+
+    // Subtype-driven when priority doesn't produce a specific title
+    const subtypeTitle = {
+      cafe:               'Café outing',
+      park:               'Park visit',
+      library:            'Library visit',
+      aquarium:           'Aquarium visit',
+      zoo:                'Zoo outing',
+      museum:             'Museum visit',
+      shopping:           'Shopping browse',
+      'play-centre':      'Play centre visit',
+      gym:                'Active outing',
+      pool:               'Pool time',
+      spa:                'Relaxed stop',
+      attraction:         'Nearby attraction',
+      'indoor-entertainment': 'Indoor activity',
+      landmark:           'Landmark visit',
+    }[sub];
+
+    return subtypeTitle || 'Best option nearby';
+  }
+
+  // ── FALLBACK: frame as an alternative with a distinct angle ───────────────
+  if (role === 'fallback') {
+    if (candidate.indoorOutdoor === 'indoor' && context.weather === 'rainy') {
+      return 'Indoor backup option';
+    }
+    if (candidate.indoorOutdoor === 'indoor' && context.weather === 'hot') {
+      return 'Cool indoor alternative';
+    }
+    if (sub === 'cafe')      return 'Alternative café stop';
+    if (sub === 'park')      return 'Fresh-air alternative';
+    if (sub === 'library')   return 'Quiet alternative';
+    if (sub === 'shopping')  return 'Low-effort browse';
+    if (sub === 'aquarium')  return 'Indoor alternative';
+    if (sub === 'museum')    return 'Cultural alternative';
+    if (sub === 'pool')      return 'Water-based alternative';
+    if (sub === 'play-centre') return 'Structured play alternative';
+
+    return 'Different kind of option';
+  }
+
+  return '';
 }
 
 // ─── Recommendation builder ───────────────────────────────────────────────────
@@ -334,6 +552,7 @@ export function buildRecommendation(candidate, role, context) {
   return {
     id:             candidate.id,
     role,
+    planTitle:      buildPlanTitle(candidate, context, role),
     name:           candidate.name,
     subtype:        candidate.subtype,
     address:        candidate.address    || null,
@@ -355,6 +574,9 @@ export function buildRecommendation(candidate, role, context) {
 // Always returns exactly 3 recommendations (or fewer only if the total candidate
 // pool after eligibility + relaxation is smaller than 3).
 // Slot roles: safest · best · fallback
+//
+// Diversity rule: prefer distinct subtypes across all three slots.
+// Same-subtype is only accepted when no diverse alternative exists.
 
 export function packageRecommendations(ranked, context, allCandidates = []) {
   // Insufficient eligible candidates — relax travel tolerance and re-score
@@ -366,35 +588,85 @@ export function packageRecommendations(ranked, context, allCandidates = []) {
 
   if (pool.length === 0) return [];
 
-  // best = highest composite score
+  // ── TEMPORARY DEBUG — remove before production ──────────────────────────
+  // Logs the top 10 scored candidates so you can inspect why certain places
+  // won and diagnose recommendation quality issues.
+  if (typeof console !== 'undefined') {
+    const top10 = pool.slice(0, 10);
+    console.group('[TodayPlans debug] Top ranked candidates');
+    top10.forEach((c, i) => {
+      console.log(
+        `#${i + 1}`,
+        c.name,
+        '|', c.subtype,
+        '| score:', c.score,
+        '| walkable:', c.walkable,
+        '| drive:', c.driveMinutes != null ? `${c.driveMinutes}min` : '—',
+        '| rating:', c.rating ?? '—',
+        '| tags:', (c.tags || []).join(', ')
+      );
+    });
+    console.groupEnd();
+  }
+  // ── END TEMPORARY DEBUG ─────────────────────────────────────────────────
+
+  // ── best = highest composite score (no constraints) ─────────────────────
   const best = pool[0];
 
-  // safest = lowest energy + closest proximity
+  // ── safest = lowest energy + closest; prefer different subtype to best ──
   const bySafety = [...pool].sort((a, b) => {
     const sa = energyRank(a.energyRequired) + (a.walkable ? 0 : 1);
     const sb = energyRank(b.energyRequired) + (b.walkable ? 0 : 1);
     return sa - sb;
   });
-  const safest = bySafety[0];
 
-  // fallback = different subtype to best and safest; prefer indoor on bad weather
-  const usedIds  = new Set([best.id, safest.id]);
-  const remainder = pool.filter(c => !usedIds.has(c.id));
+  // Try to find a safest pick with a different subtype to best
+  const safest =
+    bySafety.find(c => c.subtype !== best.subtype) ||
+    bySafety[0];
 
-  let fallback = remainder[0] || null;
+  // ── fallback = prefer distinct subtype from both best and safest ─────────
+  const usedSubtypes = new Set([best.subtype, safest.subtype]);
+  const usedIds      = new Set([best.id, safest.id]);
+  const remainder    = pool.filter(c => !usedIds.has(c.id));
 
-  if (context.weather === 'rainy' || context.weather === 'hot') {
-    const indoor = remainder.filter(c => c.indoorOutdoor === 'indoor');
-    if (indoor.length > 0) fallback = indoor[0];
+  // Priority order for fallback:
+  // 1. Different subtype from both + weather-appropriate
+  // 2. Different subtype from both
+  // 3. Different subtype from best only
+  // 4. Any remaining candidate (deduplication already handled above)
+
+  let fallback = null;
+
+  const weatherIndoor = context.weather === 'rainy' || context.weather === 'hot';
+
+  // Pass 1: diverse subtype + weather preference
+  if (!fallback && weatherIndoor) {
+    fallback = remainder.find(
+      c => !usedSubtypes.has(c.subtype) && c.indoorOutdoor === 'indoor'
+    ) || null;
   }
 
-  // Nap-timing: prefer the easiest/closest fallback
-  if (context.priority === 'nap-timing' || context.babyState === 'due-nap-soon') {
+  // Pass 2: diverse subtype, any weather fit
+  if (!fallback) {
+    fallback = remainder.find(c => !usedSubtypes.has(c.subtype)) || null;
+  }
+
+  // Pass 3: different from best at minimum (safest may share subtype with fallback)
+  if (!fallback) {
+    fallback = remainder.find(c => c.subtype !== best.subtype) || null;
+  }
+
+  // Pass 4: nap-timing override — easiest/closest regardless of subtype diversity.
+  // Only applies when Nico is coming.
+  if (context.withNico !== false &&
+      (context.priority === 'nap-timing' || context.babyState === 'due-nap-soon')) {
     const napFriendly = remainder.filter(c => c.energyRequired === 'low');
     if (napFriendly.length > 0) fallback = napFriendly[0];
   }
 
-  if (!fallback) fallback = pool[Math.min(1, pool.length - 1)];
+  // Last resort: next best unused candidate
+  if (!fallback) fallback = remainder[0] || pool[Math.min(1, pool.length - 1)];
 
   const results = [
     buildRecommendation(safest,   'safest',   context),

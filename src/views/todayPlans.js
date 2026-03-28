@@ -7,7 +7,7 @@
 //   src/domain/todayPlans.js  — context building, scoring, packaging
 //   src/services/places.js    — candidate fetching
 
-
+import { showToast } from '../utils.js';
 import {
   buildPlanContext,
   scoreCandidates,
@@ -178,18 +178,47 @@ function openChoiceSheet(config) {
 
 // ─── Prompt steps ─────────────────────────────────────────────────────────────
 //
-// Each entry is a function that shows one sheet and resolves to its answer
-// (a string for choice sheets, an object for form sheets), or null if the
-// user taps the cancel / back button.
+// Defined as named functions rather than a static array so the flow can
+// branch conditionally (e.g. skip babyState when Nico isn't coming).
 //
-// The flow loop in collectAnswers() treats null as "go back one step".
-// Step 0 uses 'Cancel' as its button label — tapping it exits the flow.
-// All subsequent steps use 'Back' — tapping it returns to the previous step.
-// This is the only navigation mechanism; no extra state machinery is needed.
+// Each function returns the sheet's resolved value, or null if the user
+// tapped Back/Cancel. collectAnswers() treats null as "repeat this step"
+// unless it is the first step, in which case it exits the flow entirely.
+//
+// Step map (4 steps when withNico=false, 5 when withNico=true):
+//   0  Who's coming?       → withNico + outingFocus
+//   1  How is Nico?        → babyState          [conditional: withNico only]
+//   2  How are you?        → parentEnergy
+//   3  What matters most?  → priority
+//   4  Food?               → foodIntent
+//   5  How far?            → travelTolerance
 
-const STEPS = [
-  // Step 0 — baby state
-  () => openChoiceSheet({
+function stepOuting() {
+  return openChoiceSheet({
+    title: 'What kind of outing?',
+    options: [
+      {
+        value:       'nico-easy',
+        title:       'Nico and me — keeping it easy',
+        description: 'Low-key, calm, minimal effort.',
+      },
+      {
+        value:       'nico-both',
+        title:       'Nico and me — something for both of us',
+        description: 'A good mix of activity and ease.',
+      },
+      {
+        value:       'me',
+        title:       'Just me today',
+        description: 'Nico is home — this one is for you.',
+      },
+    ],
+    cancel: 'Cancel',
+  });
+}
+
+function stepBabyState() {
+  return openChoiceSheet({
     title: 'How is Nico right now?',
     options: [
       { value: 'happy',        title: 'Happy',          description: 'Settled, content, good to go.' },
@@ -198,11 +227,12 @@ const STEPS = [
       { value: 'tired',        title: 'Tired',          description: 'Low energy, keep it gentle.' },
       { value: 'due-nap-soon', title: 'Due a nap soon', description: 'Time is limited.' },
     ],
-    cancel: 'Cancel',
-  }),
+    cancel: 'Back',
+  });
+}
 
-  // Step 1 — parent energy
-  () => openChoiceSheet({
+function stepParentEnergy() {
+  return openChoiceSheet({
     title: 'How are you feeling?',
     options: [
       { value: 'good',     title: 'Good',         description: 'Up for it.' },
@@ -211,17 +241,31 @@ const STEPS = [
       { value: 'solo',     title: 'Flying solo',  description: 'On your own today.' },
     ],
     cancel: 'Back',
-  }),
+  });
+}
 
-  // Step 2 — priority
-  () => openChoiceSheet({
-    title: 'What feels right today?',
+function stepPriority() {
+  return openChoiceSheet({
+    title: 'What matters most today?',
     options: PRIORITY_VALUES.map(p => ({ value: p.value, title: p.label })),
     cancel: 'Back',
-  }),
+  });
+}
 
-  // Step 3 — travel tolerance
-  () => openChoiceSheet({
+function stepFoodIntent() {
+  return openChoiceSheet({
+    title: 'How important is food?',
+    options: [
+      { value: 'required', title: 'Need to eat',      description: 'A food stop is part of the plan.' },
+      { value: 'nice',     title: 'Would be nice',    description: 'Happy either way.' },
+      { value: 'none',     title: 'Not fussed',       description: 'Food isn\'t part of this.' },
+    ],
+    cancel: 'Back',
+  });
+}
+
+function stepTravelTolerance() {
+  return openChoiceSheet({
     title: 'How far are you happy to go?',
     options: [
       { value: 'walk',  title: 'Walking distance',  description: 'Under 15 minutes on foot.' },
@@ -229,70 +273,133 @@ const STEPS = [
       { value: '30min', title: 'Up to 30 min away', description: 'Comfortable drive.' },
     ],
     cancel: 'Back',
-  }),
-
-  // Step 4 — duration
-  () => openChoiceSheet({
-    title: 'How long do you have?',
-    options: [
-      { value: '30min', title: '30 minutes' },
-      { value: '1hr',   title: 'About an hour' },
-      { value: '2hr',   title: 'A couple of hours' },
-      { value: 'open',  title: 'As long as it takes' },
-    ],
-    cancel: 'Back',
-  }),
-
-  // Step 5 — optional free-text note
-  () => openSheet({
-    title: 'Anything else? (optional)',
-    body:  'A quick note to help narrow things down.',
-    fields: [
-      {
-        id:          'freeText',
-        label:       'Notes',
-        type:        'textarea',
-        placeholder: 'e.g. Nico just ate, or keep it shaded.',
-        value:       '',
-        rows:        3,
-      },
-    ],
-    confirm: 'Find places',
-    cancel:  'Back',
-  }),
-];
-
-// Maps each step index to the answers key it populates.
-// Step 5 returns an object — handled separately in the loop.
-const STEP_KEYS = ['babyState', 'parentEnergy', 'priority', 'travelTolerance', 'duration', null];
+  });
+}
 
 // ─── Prompt flow ──────────────────────────────────────────────────────────────
+//
+// Drives each step in order, branching conditionally based on prior answers.
+// null return from any step means "Back" — go back one step.
+// null on the first step means "Cancel" — exit the flow.
+//
+// Returns a flat answers object, or null if the user cancelled.
 
 async function collectAnswers() {
   const answers = {};
-  let step = 0;
 
-  while (step < STEPS.length) {
-    const result = await STEPS[step]();
+  // ── Step 0: outing type (encodes withNico + outingFocus) ─────────────────
+  let outingType = null;
+  while (!outingType) {
+    outingType = await stepOuting();
+    if (outingType === null) return null; // Cancel on first step exits entirely
+  }
 
-    if (result === null) {
-      // Back / cancel
-      if (step === 0) return null; // Cancel on first step exits the flow entirely
-      step -= 1;
-      continue;
+  // Decode the composite value into two fields
+  if (outingType === 'me') {
+    answers.withNico    = false;
+    answers.outingFocus = 'me';
+  } else if (outingType === 'nico-easy') {
+    answers.withNico    = true;
+    answers.outingFocus = 'nico';
+  } else {
+    // nico-both
+    answers.withNico    = true;
+    answers.outingFocus = 'both';
+  }
+
+  // ── Step 1: baby state — only when Nico is coming ────────────────────────
+  if (answers.withNico) {
+    let babyState = null;
+    while (!babyState) {
+      babyState = await stepBabyState();
+      if (babyState === null) {
+        // Back — re-run step 0
+        outingType = null;
+        while (!outingType) {
+          outingType = await stepOuting();
+          if (outingType === null) return null;
+        }
+        if (outingType === 'me') { answers.withNico = false; answers.outingFocus = 'me'; }
+        else if (outingType === 'nico-easy') { answers.withNico = true; answers.outingFocus = 'nico'; }
+        else { answers.withNico = true; answers.outingFocus = 'both'; }
+
+        if (!answers.withNico) {
+          // Switched to 'me' — skip baby state entirely
+          delete answers.babyState;
+          break;
+        }
+      } else {
+        answers.babyState = babyState;
+      }
     }
+  }
 
-    const key = STEP_KEYS[step];
-
-    if (key) {
-      // Choice sheet — raw string value
-      answers[key] = result;
+  // ── Step 2: parent energy ─────────────────────────────────────────────────
+  let parentEnergy = null;
+  while (!parentEnergy) {
+    parentEnergy = await stepParentEnergy();
+    if (parentEnergy === null) {
+      // Back — re-run previous step (baby state if withNico, else step 0)
+      if (answers.withNico) {
+        let babyState = await stepBabyState();
+        if (babyState !== null) answers.babyState = babyState;
+      }
+      // Stay in this loop to re-ask parentEnergy regardless
     } else {
-      // Step 5: form sheet returns an object
-      answers.freeText = (result.freeText || '').trim() || null;
+      answers.parentEnergy = parentEnergy;
     }
+  }
 
-    step += 1;
+  // ── Step 3: priority ──────────────────────────────────────────────────────
+  let priority = null;
+  while (!priority) {
+    priority = await stepPriority();
+    if (priority === null) {
+      // Back — re-ask parent energy
+      const pe = await stepParentEnergy();
+      if (pe !== null) answers.parentEnergy = pe;
+    } else {
+      answers.priority = priority;
+    }
+  }
+
+  // ── Step 4: food intent ───────────────────────────────────────────────────
+  // If priority is 'food', food intent is implied as 'required' — skip the step.
+  if (answers.priority === 'food') {
+    answers.foodIntent = 'required';
+  } else {
+    let foodIntent = null;
+    while (!foodIntent) {
+      foodIntent = await stepFoodIntent();
+      if (foodIntent === null) {
+        // Back — re-ask priority
+        const p = await stepPriority();
+        if (p !== null) answers.priority = p;
+        // If they switched to food priority, we can break out
+        if (answers.priority === 'food') {
+          answers.foodIntent = 'required';
+          break;
+        }
+      } else {
+        answers.foodIntent = foodIntent;
+      }
+    }
+  }
+
+  // ── Step 5: travel tolerance ──────────────────────────────────────────────
+  let travelTolerance = null;
+  while (!travelTolerance) {
+    travelTolerance = await stepTravelTolerance();
+    if (travelTolerance === null) {
+      // Back — re-ask food intent (unless implied)
+      if (answers.priority !== 'food') {
+        const fi = await stepFoodIntent();
+        if (fi !== null) answers.foodIntent = fi;
+      }
+      // Stay in loop to re-ask travelTolerance
+    } else {
+      answers.travelTolerance = travelTolerance;
+    }
   }
 
   return answers;
@@ -318,56 +425,68 @@ function renderRoleBadge(role) {
   return `<span class="today-plan-role today-plan-role--${role}">${labels[role] || role}</span>`;
 }
 
-function renderMeta(rec) {
-  const parts = [];
-
-  if (rec.walkable) {
-    // driveMinutes is a drive-time estimate — not a walking-time estimate.
-    // Show a neutral label instead.
-    parts.push('🚶 Walkable');
-  } else if (rec.driveMinutes != null) {
-    parts.push(`🚗 ${rec.driveMinutes} min`);
-  }
-
-  if (rec.rating != null) {
-    parts.push(`★ ${rec.rating}`);
-  }
-
-  if (rec.tags && rec.tags.length > 0) {
-    const skip = new Set(['indoor', 'outdoor', 'easy']);
-    const display = rec.tags.filter(t => !skip.has(t)).slice(0, 3);
-    if (display.length > 0) {
-      parts.push(display.join(' · '));
-    }
-  }
-
-  if (parts.length === 0) return '';
-
-  return `
-    <div class="today-plan-meta">
-      ${parts.map(p => `<span class="today-plan-meta-item">${p}</span>`).join('')}
-    </div>
-  `;
-}
-
 function renderCard(rec) {
-  const suburb = rec.suburb
-    ? `<p class="today-plan-suburb">${rec.suburb}</p>`
+  // Distance — walkable gets a neutral label; driveMinutes is a drive estimate only
+  const distanceChip = rec.walkable
+    ? `<span class="today-plan-chip">🚶 Walkable</span>`
+    : rec.driveMinutes != null
+      ? `<span class="today-plan-chip">🚗 ${rec.driveMinutes} min</span>`
+      : '';
+
+  const ratingChip = rec.rating != null
+    ? `<span class="today-plan-chip">★ ${rec.rating}</span>`
     : '';
+
+  // Tags — skip generic structural ones already implied by other signals
+  const skip = new Set(['indoor', 'outdoor', 'easy']);
+  const tagPills = rec.tags
+    ? rec.tags
+        .filter(t => !skip.has(t))
+        .slice(0, 3)
+        .map(t => `<span class="nico-tag">${t}</span>`)
+        .join('')
+    : '';
+
+  const hasFoot = distanceChip || ratingChip || tagPills || rec.googleMapsUrl;
 
   const mapsLink = rec.googleMapsUrl
     ? `<a class="today-plan-maps-link" href="${rec.googleMapsUrl}" target="_blank" rel="noopener noreferrer">Open in Maps →</a>`
     : '';
 
+  const suburb = rec.suburb
+    ? `<p class="today-plan-suburb">${rec.suburb}</p>`
+    : '';
+
+  // planTitle is the action-framed plan label ("Easy coffee stop").
+  // rec.name is the actual place name, rendered smaller beneath it.
+  const planTitle = rec.planTitle
+    ? `<h2 class="today-plan-name">${rec.planTitle}</h2>`
+    : '';
+
+  const placeName = rec.name
+    ? `<p class="today-plan-place-name">${rec.name}</p>`
+    : '';
+
   return `
     <div class="today-plan-card" data-role="${rec.role}">
-      ${renderRoleBadge(rec.role)}
-      <h2 class="today-plan-name">${rec.name}</h2>
+      <div class="today-plan-card-top">
+        ${renderRoleBadge(rec.role)}
+      </div>
+      ${planTitle}
+      ${placeName}
       ${suburb}
       <p class="today-plan-description">${rec.description}</p>
       <p class="today-plan-why">${rec.whyNow}</p>
-      ${renderMeta(rec)}
-      ${mapsLink}
+      ${hasFoot ? `
+        <div class="today-plan-foot">
+          <div class="today-plan-chips">
+            ${distanceChip}
+            ${ratingChip}
+            ${tagPills}
+          </div>
+          ${mapsLink}
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -375,34 +494,31 @@ function renderCard(rec) {
 function renderResults(recommendations, context) {
   if (!recommendations || recommendations.length === 0) {
     return `
-      <div class="today-plan-empty">
-        <p class="card-body">No matching places found for your current preferences.</p>
-        <button class="btn-secondary w-full mt-3" id="todayPlanRetryBtn">Try again</button>
-      </div>
+      <p class="card-body">No matching places found for your current preferences.</p>
+      <button class="btn-secondary w-full mt-3" id="todayPlanRetryBtn">Try again</button>
     `;
   }
 
   let contextNote = '';
   if (context?.weather === 'rainy') {
-    contextNote = '<p class="today-plan-context-note">Keeping it indoors — looks wet out there.</p>';
+    contextNote = `<p class="today-plan-context-note">Keeping it indoors — looks wet out there.</p>`;
   } else if (context?.weather === 'hot') {
-    contextNote = '<p class="today-plan-context-note">Prioritising cool, easy options today.</p>';
+    contextNote = `<p class="today-plan-context-note">Prioritising cool, shaded options today.</p>`;
   }
 
   return `
-    <div class="today-plan-results">
-      ${contextNote}
-      <div class="today-plan-cards">
-        ${recommendations.map(rec => renderCard(rec)).join('')}
-      </div>
-      <button class="btn-secondary w-full mt-4" id="todayPlanRetryBtn">Start over</button>
+    ${contextNote}
+    <div class="today-plan-cards">
+      ${recommendations.map(rec => renderCard(rec)).join('')}
     </div>
+    <button class="btn-secondary w-full mt-4" id="todayPlanRetryBtn">Start over</button>
   `;
 }
 
 function renderLoading() {
   return `
     <div class="today-plan-loading">
+      <p class="eyebrow" style="margin-bottom: 8px;">One moment</p>
       <p class="card-body">Finding the best options for right now…</p>
     </div>
   `;
@@ -412,26 +528,34 @@ function renderPrompt() {
   return `
     <div class="today-plan-prompt">
       <p class="card-body">Answer a few quick questions and get three tailored suggestions for today.</p>
-      <button class="btn-primary w-full mt-3" id="todayPlanStartBtn">Let's find somewhere</button>
+      <button class="btn-primary w-full mt-4" id="todayPlanStartBtn">Let's find somewhere</button>
     </div>
   `;
 }
 
 function renderView(phase, recommendations, context) {
-  let content = '';
+  // In results phase the outer .card shell is stripped so each recommendation
+  // card renders as its own surface (matching nico activity cards).
+  // setCardContent always targets #todayPlanCard and sets innerHTML — the
+  // wrapper element itself never changes, only its class and content.
+  const isResults = phase === 'results';
 
+  // Outer wrapper class: transparent in results, card in all other phases
+  const wrapperClass = isResults
+    ? 'today-plan-results-shell mt-0'
+    : 'card mt-0';
+
+  let content = '';
   if (phase === 'idle') {
     content = renderPrompt();
   } else if (phase === 'loading') {
     content = renderLoading();
   } else if (phase === 'results') {
     content = renderResults(recommendations, context);
-  } else if (phase === 'error') {
+  } else {
     content = `
-      <div class="today-plan-error">
-        <p class="card-body">Something went wrong — please try again.</p>
-        <button class="btn-secondary w-full mt-3" id="todayPlanRetryBtn">Try again</button>
-      </div>
+      <p class="card-body">Something went wrong — please try again.</p>
+      <button class="btn-secondary w-full mt-3" id="todayPlanRetryBtn">Try again</button>
     `;
   }
 
@@ -443,7 +567,7 @@ function renderView(phase, recommendations, context) {
           <h1 class="page-title">Today's plan</h1>
           <p class="page-subtitle">Where to take Nico right now.</p>
         </header>
-        <section class="card mt-0" id="todayPlanCard">
+        <section class="${wrapperClass}" id="todayPlanCard">
           ${content}
         </section>
         <div style="height: 12px;"></div>
@@ -453,10 +577,19 @@ function renderView(phase, recommendations, context) {
 }
 
 // ─── Card-level re-render helper ──────────────────────────────────────────────
+// Also swaps the wrapper class between phases:
+//   results → today-plan-results-shell (transparent, cards provide their own surfaces)
+//   all others → card (single contained surface)
 
-function setCardContent(container, html) {
+function setCardContent(container, html, isResults = false) {
   const card = container.querySelector('#todayPlanCard');
-  if (card) card.innerHTML = html;
+  if (!card) return;
+  if (isResults) {
+    card.className = 'today-plan-results-shell mt-0';
+  } else {
+    card.className = 'card mt-0';
+  }
+  card.innerHTML = html;
 }
 
 // ─── Flow ─────────────────────────────────────────────────────────────────────
@@ -483,8 +616,7 @@ async function runFlow(container, profile, weatherData) {
     answers.weatherSource = 'manual';
   }
 
-  setCardContent(container, renderLoading());
-
+  setCardContent(container, renderLoading(), false);
   const context = buildPlanContext(answers, profile, weatherData);
   const radiusMetres = radiusToMetres(context.travelTolerance);
   const location = await getGeolocation();
@@ -507,7 +639,7 @@ async function runFlow(container, profile, weatherData) {
   _lastResults = recommendations;
   _lastContext  = context;
 
-  setCardContent(container, renderResults(recommendations, context));
+  setCardContent(container, renderResults(recommendations, context), true);
   bindRetry(container, profile, weatherData);
 }
 
@@ -517,7 +649,7 @@ function bindRetry(container, profile, weatherData) {
   container.querySelector('#todayPlanRetryBtn')?.addEventListener('click', () => {
     _lastResults = null;
     _lastContext  = null;
-    setCardContent(container, renderPrompt());
+    setCardContent(container, renderPrompt(), false);
     bindStart(container, profile, weatherData);
   });
 }
@@ -530,11 +662,9 @@ function bindStart(container, profile, weatherData) {
       await runFlow(container, profile, weatherData);
     } catch {
       setCardContent(container, `
-        <div class="today-plan-error">
-          <p class="card-body">Something went wrong — please try again.</p>
-          <button class="btn-secondary w-full mt-3" id="todayPlanRetryBtn">Try again</button>
-        </div>
-      `);
+        <p class="card-body">Something went wrong — please try again.</p>
+        <button class="btn-secondary w-full mt-3" id="todayPlanRetryBtn">Try again</button>
+      `, false);
       bindRetry(container, profile, weatherData);
     }
   });
