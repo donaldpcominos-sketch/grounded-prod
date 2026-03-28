@@ -11,6 +11,7 @@ import { showToast } from '../utils.js';
 import {
   getBooksByStatus,
   getBookSummary,
+  getBookRecommendations,
   applyBookStatusTransition,
 } from '../domain/books.js';
 import {
@@ -19,6 +20,29 @@ import {
   updateBook,
   archiveBook,
 } from '../services/books.js';
+
+// ─── renderRecommendations ────────────────────────────────────────────────────
+
+function renderRecommendations(books) {
+  const recommendations = getBookRecommendations(books);
+  if (recommendations.length === 0) return '';
+
+  const items = recommendations.map(rec => `
+    <div class="books-recommendation-item">
+      <p class="books-recommendation-title">${rec.title}</p>
+      <p class="books-recommendation-text">${rec.message}</p>
+    </div>
+  `).join('');
+
+  return `
+    <div class="books-recommendations">
+      <p class="books-recommendations-heading">Reading signals</p>
+      <div class="books-recommendation-list">
+        ${items}
+      </div>
+    </div>
+  `;
+}
 
 // ─── renderSummary ────────────────────────────────────────────────────────────
 
@@ -51,6 +75,7 @@ function renderBookActions(book) {
       `;
     case 'finished':
       return `
+        <button class="book-action book-action--subtle" data-action="edit-reflection" data-book-id="${book.id}">Edit Reflection</button>
         <button class="book-action book-action--subtle" data-action="move-reading" data-book-id="${book.id}">Move to Reading</button>
         <button class="book-action book-action--subtle" data-action="archive" data-book-id="${book.id}">Archive</button>
       `;
@@ -72,6 +97,17 @@ function renderBookCard(book) {
 
   const statusLabel = STATUS_LABELS[book.status] || book.status;
 
+  const reflection = book.status === 'finished'
+    ? [
+        book.rating
+          ? `<p class="book-card-rating">${'★'.repeat(book.rating)}${'☆'.repeat(5 - book.rating)}</p>`
+          : '',
+        book.notes
+          ? `<p class="book-card-note">${book.notes}</p>`
+          : '',
+      ].join('')
+    : '';
+
   return `
     <div class="book-card">
       <div class="book-card-body">
@@ -80,6 +116,7 @@ function renderBookCard(book) {
           <span class="book-card-status">${statusLabel}</span>
         </div>
         ${author}
+        ${reflection}
       </div>
       <div class="book-card-actions">
         ${renderBookActions(book)}
@@ -129,6 +166,7 @@ function renderView(viewState) {
         </header>
 
         ${renderSummary(summary)}
+        ${renderRecommendations(viewState.books)}
 
         <div class="books-add-row">
           <button class="books-add-btn" id="addBookBtn">Add a Book</button>
@@ -183,9 +221,43 @@ export const BooksView = {
       const book = viewState.books.find(b => b.id === bookId);
       if (!book) return;
 
+      // Strict integer-only rating parse — rejects decimals like "4.5".
+      function parseRating(input) {
+        const trimmed = (input || '').trim();
+        if (trimmed === '' || !/^\d+$/.test(trimmed)) return null;
+        const n = Number(trimmed);
+        return (n >= 1 && n <= 5) ? n : null;
+      }
+
       try {
         if (action === 'archive') {
+          const confirmed = window.confirm(
+            'Archive this book?\n\nIt will be removed from your active lists, but not permanently deleted.'
+          );
+          if (!confirmed) return;
           await archiveBook(user.uid, bookId);
+          await refreshBooks();
+          return;
+        }
+
+        if (action === 'edit-reflection') {
+          const ratingInput = prompt(
+            'Update your rating (1–5, optional):',
+            book.rating ?? ''
+          );
+          if (ratingInput === null) return; // user cancelled
+
+          const noteInput = prompt(
+            'Update your note (optional):',
+            book.notes ?? ''
+          );
+          if (noteInput === null) return; // user cancelled
+
+          await updateBook(user.uid, bookId, {
+            ...book,
+            rating: parseRating(ratingInput),
+            notes:  noteInput.trim(),
+          });
           await refreshBooks();
           return;
         }
@@ -200,6 +272,15 @@ export const BooksView = {
         if (!nextStatus) return;
 
         const updatedBook = applyBookStatusTransition(book, nextStatus);
+
+        if (action === 'mark-finished') {
+          const ratingInput = prompt('How would you rate this book? (1–5, optional)') || '';
+          updatedBook.rating = parseRating(ratingInput);
+
+          const noteInput  = (prompt('What stayed with you from this book? (optional)') || '').trim();
+          updatedBook.notes = noteInput;
+        }
+
         await updateBook(user.uid, bookId, updatedBook);
         await refreshBooks();
 

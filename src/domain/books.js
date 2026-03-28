@@ -221,3 +221,68 @@ export function getBookSummary(books) {
     finishedCount,
   };
 }
+
+// ─── getBookRecommendations ───────────────────────────────────────────────────
+
+// Derives a small set of calm, deterministic reading signals from the user's
+// own finished books. No external calls, no randomness, no AI.
+// Operates only on non-archived finished books.
+//
+// Returns: array of { title, message } — between 0 and 3 items.
+// Returns [] when there are no finished books at all.
+export function getBookRecommendations(books) {
+  if (!Array.isArray(books)) return [];
+
+  const finished = books.filter(b => !b.isArchived && b.status === 'finished');
+
+  if (finished.length === 0) return [];
+
+  const signals = [];
+
+  // Signal 1 — highly rated books: the user is finding books they genuinely enjoy.
+  const highlyRated = finished.filter(b => b.rating >= 4);
+  if (highlyRated.length >= 2) {
+    signals.push({
+      title:   'You know what you enjoy',
+      message: `${highlyRated.length} of your finished books landed at 4 or 5 stars. You have a clear sense of what resonates — trust that instinct when choosing what to read next.`,
+    });
+  }
+
+  // Signal 2 — notes present on multiple books: reflective reading is a habit.
+  const withNotes = finished.filter(b => b.notes && b.notes.trim().length > 0);
+  if (withNotes.length >= 2) {
+    signals.push({
+      title:   'Reflective reading suits you',
+      message: `You've left notes on ${withNotes.length} finished books. Taking time to capture what stayed with you tends to make the reading stick.`,
+    });
+  }
+
+  // Signal 3 — repeated category across finished books: a theme is emerging.
+  const categoryCounts = {};
+  for (const book of finished) {
+    for (const cat of (book.categories || [])) {
+      if (cat) categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+    }
+  }
+  const topCategory = Object.entries(categoryCounts)
+    .filter(([, count]) => count >= 2)
+    .sort(([, a], [, b]) => b - a)[0];
+
+  if (topCategory) {
+    signals.push({
+      title:   'A theme is emerging',
+      message: `Several of your finished books touch on ${topCategory[0]}. That's worth leaning into.`,
+    });
+  }
+
+  // Fallback — finished books exist but signals are thin.
+  // Shown only when no richer signal fired, to avoid an empty section.
+  if (signals.length === 0) {
+    signals.push({
+      title:   'Keep going',
+      message: 'Rate and note a few more finished books and your reading signals will start to take shape.',
+    });
+  }
+
+  return signals.slice(0, 3);
+}
