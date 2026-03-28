@@ -3,7 +3,7 @@ import { touchLastActive } from '../services/lastSeen.js';
 import { getSuggestionsForEnergy } from '../data/nutrition.js';
 import { getTodayDisplay, showToast } from '../utils.js';
 import { getWeekSummary } from '../services/progress.js';
-import { fetchWeather } from '../services/weather.js';
+import { fetchWeather, getYesterdaySnapshot } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
 import { HABITS } from '../services/habits.js';
 import { navigateTo } from '../router.js';
@@ -15,12 +15,16 @@ import {
   getReminderDecision,
   getMeaningfulEngagement,
   classifyEngagementState,
+  compareWeather,
+  buildWeatherBriefingMessage,
+  getWeatherBriefingDecision,
 } from '../domain/notifications.js';
 import {
   loadNotificationData,
   recordAppOpened,
   recordMeaningfulEngagement,
   recordDailyReminderSent,
+  recordWeatherBriefingSent,
 } from '../services/notifications.js';
 
 // ─── Weather card ─────────────────────────────────────────────────────────────
@@ -94,6 +98,36 @@ function getReturnMessage(gapHours) {
     headline: 'Good to see you again.',
     sub: "It's been a couple of days. Start wherever feels right."
   };
+}
+
+// ─── Weather briefing banner ──────────────────────────────────────────────────
+// Rendered only when getWeatherBriefingDecision says shouldShow === true.
+// Uses a distinct ID and class from the reminder banner so both can coexist
+// without ambiguity. Only one is shown per app open per feature.
+
+function renderWeatherBriefingBanner(briefing) {
+  if (!briefing) return '';
+
+  return `
+    <div
+      class="reminder-banner reminder-banner--weather"
+      id="weatherBriefingBanner"
+      role="status"
+      aria-live="polite"
+    >
+      <div class="reminder-banner-inner">
+        <div class="reminder-banner-text">
+          <p class="reminder-banner-headline">${briefing.headline}</p>
+          <p class="reminder-banner-body">${briefing.body}</p>
+        </div>
+        <button
+          class="reminder-banner-dismiss"
+          id="weatherBriefingBannerDismiss"
+          aria-label="Dismiss weather briefing"
+        >✕</button>
+      </div>
+    </div>
+  `;
 }
 
 // ─── In-app reminder banner ───────────────────────────────────────────────────
@@ -496,7 +530,7 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-function renderView(user, state, returnMsg, weather, recommendations, weekSummary, reminderDecision) {
+function renderView(user, state, returnMsg, weather, recommendations, weekSummary, reminderDecision, weatherBriefing) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -519,6 +553,7 @@ function renderView(user, state, returnMsg, weather, recommendations, weekSummar
 </p>
 
         ${renderReturnCard(returnMsg)}
+        ${renderWeatherBriefingBanner(weatherBriefing)}
         ${renderReminderBanner(reminderDecision)}
         ${renderPriorityActions(recommendations, state)}
         ${renderWeatherCard(weather)}
@@ -555,11 +590,34 @@ export const TodayView = {
 
     touchLastActive(user.uid);
 
-    // Evaluate reminder eligibility. Suppressed for the session if the user
-    // already dismissed the banner during this session.
+    // ── Reminder decision ──────────────────────────────────────────────────
+    // Suppressed for the session if the user already dismissed it.
     const reminderDecision = (!_reminderDismissed && notifData.prefs && notifData.notifState)
       ? getReminderDecision(notifData.prefs, state, notifData.notifState)
       : null;
+
+    // ── Weather briefing decision ──────────────────────────────────────────
+    // Read yesterday's snapshot from localStorage (synchronous, no network).
+    // Suppressed for the session if the user already dismissed it.
+    let weatherBriefing = null;
+    if (!_weatherBriefingDismissed && notifData.prefs && notifData.notifState) {
+      const briefingDecision = getWeatherBriefingDecision(
+        notifData.prefs,
+        notifData.notifState,
+        weather,
+      );
+
+      if (briefingDecision.shouldShow) {
+        const yesterday  = getYesterdaySnapshot();
+        const comparison = compareWeather(weather, yesterday);
+        weatherBriefing  = buildWeatherBriefingMessage(comparison, weather);
+        // Record immediately after building so it does not reappear today
+        // even if the user dismisses and reopens the app.
+        if (weatherBriefing) {
+          recordWeatherBriefingSent(user.uid).catch(() => {});
+        }
+      }
+    }
 
     const returnMsg = _returnDismissed ? null : getReturnMessage(state.lastSeen?.gapHours ?? 0);
 
@@ -583,10 +641,10 @@ export const TodayView = {
       getRecommendations(),
       habitsWeekSummary,
       reminderDecision,
+      weatherBriefing,
     );
 
-    // Record the reminder as sent immediately after rendering, so it cannot
-    // reappear today even if the user dismisses it and reopens the app.
+    // Record the reminder as sent immediately after rendering.
     if (reminderDecision?.shouldSendReminder) {
       recordDailyReminderSent(user.uid).catch(() => {});
     }
@@ -595,12 +653,9 @@ export const TodayView = {
     let habitsRefreshSeq = 0;
 
     // ── Banner auto-hide helper ──────────────────────────────────────────────
-    // Called whenever the engagement state may have changed during the session.
-    // Uses the pure domain function — no Firestore read required.
-    // Hides the banner smoothly if the day is now classified as done.
     function hideReminderBannerIfDone(updatedViewState) {
       const banner = document.getElementById('reminderBanner');
-      if (!banner) return; // already gone
+      if (!banner) return;
 
       const newEngagementState = classifyEngagementState(updatedViewState);
       if (newEngagementState === 'done') {
@@ -645,12 +700,20 @@ export const TodayView = {
       });
     }
 
+    function bindWeatherBriefingBanner() {
+      document.getElementById('weatherBriefingBannerDismiss')?.addEventListener('click', () => {
+        const banner = document.getElementById('weatherBriefingBanner');
+        if (!banner) return;
+        _weatherBriefingDismissed = true;
+        banner.classList.add('reminder-banner--dismissing');
+        setTimeout(() => banner.remove(), 300);
+      });
+    }
+
     function bindReminderBanner() {
       document.getElementById('reminderBannerDismiss')?.addEventListener('click', () => {
         const banner = document.getElementById('reminderBanner');
         if (!banner) return;
-        // Mark dismissed for the session so it does not reappear if the user
-        // navigates away and returns to Today.
         _reminderDismissed = true;
         banner.classList.add('reminder-banner--dismissing');
         setTimeout(() => banner.remove(), 300);
@@ -737,12 +800,10 @@ export const TodayView = {
         viewState.habits  = freshState.habits;
         habitsWeekSummary = freshWeekSummary;
 
-        // Record engagement if habits have been completed.
         if (freshState.habits?.completedCount > 0) {
           recordMeaningfulEngagement(user.uid).catch(() => {});
         }
 
-        // Merge fresh habits into viewState so the engagement check is accurate.
         const mergedState = { ...viewState, habits: freshState.habits };
         hideReminderBannerIfDone(mergedState);
 
@@ -797,7 +858,6 @@ export const TodayView = {
             await saveTodayWellnessCheckin(user.uid, wellnessState);
 
             if (wellnessState.mood && wellnessState.energy) {
-              // Check-in complete — record engagement and evaluate banner suppression.
               recordMeaningfulEngagement(user.uid).catch(() => {});
 
               const mergedState = { ...viewState, wellness: { ...wellnessState } };
@@ -858,6 +918,7 @@ export const TodayView = {
     bindStaticTiles();
     bindQci();
     bindReminderBanner();
+    bindWeatherBriefingBanner();
 
     container._groundedCleanup = () => {
       window.removeEventListener('grounded:habits-updated', handleHabitsUpdated);
@@ -866,7 +927,8 @@ export const TodayView = {
 };
 
 // ─── Module-level session state ───────────────────────────────────────────────
-// Both flags live outside init so they survive navigation away and back.
+// All flags live outside init so they survive navigation away and back.
 
-let _returnDismissed   = false;
-let _reminderDismissed = false;
+let _returnDismissed          = false;
+let _reminderDismissed        = false;
+let _weatherBriefingDismissed = false;
