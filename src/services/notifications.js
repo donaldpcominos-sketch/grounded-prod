@@ -31,6 +31,9 @@ export const DEFAULT_NOTIFICATION_PREFS = {
   quietHoursStart:     '21:00',
   quietHoursEnd:       '07:00',
   nudgesEnabled:       false,
+  // Weather briefing — shown in-app on first open after weatherTime each day.
+  weatherEnabled:      false,
+  weatherTime:         '07:30',
 };
 
 // ─── Notification runtime state: source of truth for shape ────────────────────
@@ -40,6 +43,7 @@ export const DEFAULT_NOTIFICATION_STATE = {
   lastNudgeSentAt:            null,
   lastOpenedAt:               null,
   lastMeaningfulEngagementAt: null,
+  lastWeatherBriefingSentAt:  null,
 };
 
 // ─── Firestore refs ───────────────────────────────────────────────────────────
@@ -74,6 +78,7 @@ function normaliseState(stored) {
     lastNudgeSentAt:            toDate(stored?.lastNudgeSentAt),
     lastOpenedAt:               toDate(stored?.lastOpenedAt),
     lastMeaningfulEngagementAt: toDate(stored?.lastMeaningfulEngagementAt),
+    lastWeatherBriefingSentAt:  toDate(stored?.lastWeatherBriefingSentAt),
   };
 }
 
@@ -242,6 +247,12 @@ export async function recordMeaningfulEngagement(userId) {
   });
 }
 
+export async function recordWeatherBriefingSent(userId) {
+  await saveNotificationState(userId, {
+    lastWeatherBriefingSentAt: serverTimestamp(),
+  });
+}
+
 // ─── Preferences: granular save helpers ──────────────────────────────────────
 
 export async function saveMasterEnabled(userId, enabled) {
@@ -288,5 +299,19 @@ export async function saveNudgesEnabled(userId, enabled) {
   await setDoc(prefsRef(userId), {
     nudgesEnabled: enabled,
     updatedAt:     serverTimestamp(),
+  }, { merge: true });
+}
+
+export async function saveWeatherEnabled(userId, enabled) {
+  await setDoc(prefsRef(userId), {
+    weatherEnabled: enabled,
+    updatedAt:      serverTimestamp(),
+  }, { merge: true });
+}
+
+export async function saveWeatherTime(userId, time) {
+  await setDoc(prefsRef(userId), {
+    weatherTime: time,
+    updatedAt:   serverTimestamp(),
   }, { merge: true });
 }

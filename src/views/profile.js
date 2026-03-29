@@ -16,6 +16,8 @@ import {
   saveReminderWindow,
   saveQuietHours,
   saveNudgesEnabled,
+  saveWeatherEnabled,
+  saveWeatherTime,
 } from '../services/notifications.js';
 
 let state = {
@@ -126,6 +128,8 @@ function renderNotificationCard() {
     quietHoursStart,
     quietHoursEnd,
     nudgesEnabled,
+    weatherEnabled,
+    weatherTime,
   } = notifPrefs;
 
   return `
@@ -204,6 +208,24 @@ function renderNotificationCard() {
             <span class="notif-time-label">Until</span>
             <input type="time" id="quietHoursEnd" class="notif-time-input" value="${quietHoursEnd}" />
           </div>
+        </div>
+
+        <!-- Weather briefing -->
+        <div class="notif-section-divider mt-3"></div>
+        <p class="notif-section-label mt-3">Weather briefing</p>
+        <p class="notif-hint mt-1">A short morning summary — temperature, rain, and how today compares to yesterday.</p>
+
+        <div class="notif-row mt-2">
+          <span class="notif-label">Morning weather</span>
+          <label class="notif-toggle" aria-label="Toggle weather briefing">
+            <input type="checkbox" id="weatherToggle" ${weatherEnabled ? 'checked' : ''} />
+            <span class="notif-toggle-track"></span>
+          </label>
+        </div>
+
+        <div id="weatherTimeRow" class="notif-time-row ${weatherEnabled ? '' : 'notif-time-row--hidden'}">
+          <span class="notif-time-label">Show after</span>
+          <input type="time" id="weatherTime" class="notif-time-input" value="${weatherTime}" />
         </div>
 
         <!-- Nudges -->
@@ -417,7 +439,6 @@ function bindEvents() {
     if (enabling) {
       const current = Notification.permission;
 
-      // Already denied at the OS/browser level — cannot request again.
       if (current === 'denied') {
         showToast(
           'Notifications are blocked in your browser. You can enable them in browser settings.',
@@ -425,19 +446,17 @@ function bindEvents() {
           6000,
         );
         e.target.checked = false;
-        // Re-render so the card switches to the blocked state.
         state.notifPermission = 'denied';
         render();
         return;
       }
 
-      // Not yet decided — ask the user now (only triggered by this interaction).
       if (current === 'default') {
         const result = await requestPermission();
         state.notifPermission = result;
 
         if (result === 'granted') {
-          // Permission granted — fall through to save below.
+          // fall through to save below
         } else if (result === 'denied') {
           showToast(
             'Notifications are blocked in your browser. You can enable them in browser settings.',
@@ -448,14 +467,11 @@ function bindEvents() {
           render();
           return;
         } else {
-          // User dismissed the prompt without choosing ('default' returned again).
           showToast('Notifications weren\'t enabled — you can try again any time.', 'error', 4000);
           e.target.checked = false;
           return;
         }
       }
-
-      // current === 'granted' falls straight through here with no prompt needed.
     }
 
     state.notifPrefs.masterEnabled = enabling;
@@ -540,6 +556,31 @@ function bindEvents() {
     state.notifPrefs.quietHoursStart = start;
     state.notifPrefs.quietHoursEnd   = end;
     await saveQuietHours(state.user.uid, state.notifPrefs.quietHoursEnabled, start, end);
+  });
+
+  // ── Weather toggle ──
+  document.getElementById('weatherToggle')?.addEventListener('change', async (e) => {
+    const enabling = e.target.checked;
+    state.notifPrefs.weatherEnabled = enabling;
+    setVisible(document.getElementById('weatherTimeRow'), enabling);
+    try {
+      await saveWeatherEnabled(state.user.uid, enabling);
+      showToast(enabling ? 'Weather briefing on \u2713' : 'Weather briefing off', 'success', 2500);
+    } catch {
+      showToast('Couldn\'t save \u2014 check your connection', 'error', 4000);
+    }
+  });
+
+  // ── Weather time ──
+  document.getElementById('weatherTime')?.addEventListener('change', async (e) => {
+    const time = e.target.value;
+    state.notifPrefs.weatherTime = time;
+    try {
+      await saveWeatherTime(state.user.uid, time);
+      showToast('Weather time updated \u2713', 'success', 2000);
+    } catch {
+      showToast('Couldn\'t save \u2014 check your connection', 'error', 4000);
+    }
   });
 
   // ── Nudges toggle ──

@@ -1,14 +1,33 @@
-// ─── weather.js ──────────────────────────────────────────────────────────────
+// src/services/weather.js
 // Fetches current weather + 4-day forecast from Open-Meteo (no API key needed).
 // Caches to localStorage so it works offline.
 // UV walk window: finds morning and afternoon slots where UV index <= 3.
+//
+// Yesterday snapshot:
+// On every successful live fetch, a minimal snapshot of today's conditions
+// { temp, high, low, rainExpected } is written to localStorage keyed by date.
+// On the next calendar day, callers can read it via getYesterdaySnapshot().
+// No extra network call is made — the snapshot is a by-product of the fetch.
+//
+// rainExpected is a boolean derived from the daily weather code
+// (codes 51–99 cover all precipitation). Computed here so the domain layer
+// receives a stable boolean rather than a raw code it has to re-interpret.
 
-const CACHE_KEY    = 'grounded_weather_cache';
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const CACHE_KEY           = 'grounded_weather_cache';
+const SNAPSHOT_KEY_PREFIX = 'grounded_weather_day_'; // + YYYY-MM-DD
+const CACHE_TTL_MS        = 60 * 60 * 1000;          // 1 hour
 
 // Default location: Greystanes, Sydney
 const DEFAULT_LAT = -33.8354;
 const DEFAULT_LNG = 150.9836;
+
+// ─── Date helpers ─────────────────────────────────────────────────────────────
+
+function dateKey(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 
@@ -31,9 +50,45 @@ function readCache() {
   }
 }
 
+// ─── Yesterday snapshot helpers ───────────────────────────────────────────────
+// Snapshot shape: { temp, high, low, rainExpected }
+
+function writeDaySnapshot(key, snapshot) {
+  try {
+    localStorage.setItem(SNAPSHOT_KEY_PREFIX + key, JSON.stringify(snapshot));
+  } catch {
+    // storage full or unavailable — silently skip
+  }
+}
+
+// Returns the snapshot written on the previous calendar day, or null if absent.
+// null on first-ever use is expected — the briefing degrades gracefully.
+export function getYesterdaySnapshot() {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY_PREFIX + dateKey(-1));
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+// ─── Rain detection ───────────────────────────────────────────────────────────
+// Open-Meteo WMO weather code ranges that indicate precipitation.
+// Ranges: drizzle 51–57, rain 61–67, snow 71–77, showers 80–86,
+//         thunderstorm 95–99.
+// Reference: https://open-meteo.com/en/docs#weathervariables
+
+function isRainCode(code) {
+  if (typeof code !== 'number') return false;
+  return (code >= 51 && code <= 57)
+      || (code >= 61 && code <= 67)
+      || (code >= 71 && code <= 77)
+      || (code >= 80 && code <= 86)
+      || (code >= 95 && code <= 99);
+}
+
 // ─── UV walk window ───────────────────────────────────────────────────────────
-// Returns a human-readable string describing when UV will be <= 3 today.
-// Uses the hourly UV index array from Open-Meteo.
 
 function getUvWalkWindow(hourlyTimes, hourlyUv) {
   if (!hourlyTimes || !hourlyUv) return null;
@@ -74,23 +129,23 @@ function getUvWalkWindow(hourlyTimes, hourlyUv) {
 // ─── Condition label + emoji ──────────────────────────────────────────────────
 
 function describeWeatherCode(code) {
-  if (code === 0)               return { label: 'Clear sky',        emoji: '☀️' };
-  if (code <= 2)                return { label: 'Partly cloudy',    emoji: '⛅' };
-  if (code === 3)               return { label: 'Overcast',         emoji: '☁️' };
-  if (code <= 49)               return { label: 'Foggy',            emoji: '🌫️' };
-  if (code <= 57)               return { label: 'Drizzle',          emoji: '🌦️' };
-  if (code <= 67)               return { label: 'Rain',             emoji: '🌧️' };
-  if (code <= 77)               return { label: 'Snow',             emoji: '❄️' };
-  if (code <= 82)               return { label: 'Rain showers',     emoji: '🌦️' };
-  if (code <= 86)               return { label: 'Snow showers',     emoji: '🌨️' };
-  if (code >= 95)               return { label: 'Thunderstorm',     emoji: '⛈️' };
+  if (code === 0)  return { label: 'Clear sky',     emoji: '☀️' };
+  if (code <= 2)   return { label: 'Partly cloudy', emoji: '⛅' };
+  if (code === 3)  return { label: 'Overcast',       emoji: '☁️' };
+  if (code <= 49)  return { label: 'Foggy',          emoji: '🌫️' };
+  if (code <= 57)  return { label: 'Drizzle',        emoji: '🌦️' };
+  if (code <= 67)  return { label: 'Rain',           emoji: '🌧️' };
+  if (code <= 77)  return { label: 'Snow',           emoji: '❄️' };
+  if (code <= 82)  return { label: 'Rain showers',   emoji: '🌦️' };
+  if (code <= 86)  return { label: 'Snow showers',   emoji: '🌨️' };
+  if (code >= 95)  return { label: 'Thunderstorm',   emoji: '⛈️' };
   return { label: 'Variable', emoji: '🌤️' };
 }
 
 // ─── Main fetch ───────────────────────────────────────────────────────────────
 
 export async function fetchWeather(lat = DEFAULT_LAT, lng = DEFAULT_LNG) {
-  // Try cache first if fresh
+  // Try cache first if still fresh
   const cached = readCache();
   if (cached && !cached.stale) {
     return { ...cached.data, fromCache: false };
@@ -117,6 +172,11 @@ export async function fetchWeather(lat = DEFAULT_LAT, lng = DEFAULT_LNG) {
 
     const currentCondition = describeWeatherCode(current.weather_code);
 
+    // rainExpected: derived from today's daily weather code (index 0).
+    // The daily code covers the full calendar day, so this correctly flags
+    // afternoon rain that hasn't started yet at time of briefing.
+    const rainExpected = isRainCode(daily.weather_code[0]);
+
     // Build 4-day forecast (today + 3 days)
     const forecast = daily.time.slice(0, 4).map((dateStr, i) => {
       const cond = describeWeatherCode(daily.weather_code[i]);
@@ -137,16 +197,26 @@ export async function fetchWeather(lat = DEFAULT_LAT, lng = DEFAULT_LNG) {
     const walkWindow = getUvWalkWindow(hourly.time, hourly.uv_index);
 
     const data = {
-      currentTemp:      Math.round(current.temperature_2m),
-      currentEmoji:     currentCondition.emoji,
-      currentDesc:      currentCondition.label,
-      currentUv:        Math.round(current.uv_index),
+      currentTemp:  Math.round(current.temperature_2m),
+      currentEmoji: currentCondition.emoji,
+      currentDesc:  currentCondition.label,
+      currentUv:    Math.round(current.uv_index),
+      rainExpected,
       forecast,
       walkWindow,
-      fetchedAt:        new Date().toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
+      fetchedAt:    new Date().toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
     };
 
     writeCache(data);
+
+    // Write today's snapshot so tomorrow's briefing can compare.
+    writeDaySnapshot(dateKey(0), {
+      temp:        data.currentTemp,
+      high:        forecast[0]?.high ?? data.currentTemp,
+      low:         forecast[0]?.low  ?? data.currentTemp,
+      rainExpected: data.rainExpected,
+    });
+
     return { ...data, fromCache: false };
 
   } catch {
