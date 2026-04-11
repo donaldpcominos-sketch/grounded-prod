@@ -17,10 +17,6 @@ function isSurfaced(state, key) {
   return !!state?.capabilities?.[key]?.surfaced;
 }
 
-function hasNutritionLogged(state) {
-  return !!state?.nutrition?.nourished || !!state?.nutrition?.note;
-}
-
 function hasIncompleteHabits(state) {
   const completed = state?.habits?.completedCount ?? 0;
   const total = state?.habits?.totalCount ?? 0;
@@ -48,7 +44,6 @@ const FAMILY = {
   START_SMALL:    'start-small',
   BUILD_MOMENTUM: 'build-momentum',
   CHECK_IN_FIRST: 'check-in-first',
-  NOURISH_FIRST:  'nourish-first',
   KEEP_GOING:     'keep-going',
 };
 
@@ -130,47 +125,6 @@ function addWorkoutRecommendation(list, state, context) {
     message,
     actionLabel: 'Open workout',
     route: '#/workouts',
-    priority
-  });
-}
-
-function addNutritionRecommendation(list, state, context) {
-  if (!isSurfaced(state, 'nutrition')) return;
-  if (hasNutritionLogged(state)) return;
-
-  let title = 'Eat something simple';
-  let message = 'A nourishing meal or snack could help steady the day.';
-  let priority = 45;
-  let family = FAMILY.NOURISH_FIRST;
-
-  if (context.needsCheckIn) {
-    priority = 70;
-    family = FAMILY.CHECK_IN_FIRST;
-  } else if (context.energyBand === 'low') {
-    title = 'Eat something simple';
-    message = 'Low energy days are a good time to keep food easy and nourishing.';
-    priority = 14;
-    family = FAMILY.NOURISH_FIRST;
-  } else if (context.gapBand !== 'none') {
-    title = 'Nourish first';
-    message = 'A simple meal or snack is an easy reset point for today.';
-    priority = 18;
-    family = FAMILY.NOURISH_FIRST;
-  } else if (context.momentumBand === 'light') {
-    title = 'Nourish yourself';
-    message = 'A simple nourishing choice today is a good way to build a little momentum.';
-    priority = 28;
-    family = FAMILY.BUILD_MOMENTUM;
-  }
-
-  pushRecommendation(list, {
-    id: 'nutrition',
-    type: 'nutrition',
-    family,
-    title,
-    message,
-    actionLabel: 'See ideas',
-    targetId: 'nourishmentCard',
     priority
   });
 }
@@ -364,7 +318,6 @@ export function getTodayRecommendations(state) {
 
   addCheckInRecommendation(candidates, state, context);
   addWorkoutRecommendation(candidates, state, context);
-  addNutritionRecommendation(candidates, state, context);
   addHabitsRecommendation(candidates, state, context);
   addNicoRecommendation(candidates, state, context);
 

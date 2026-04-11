@@ -55,6 +55,10 @@ export async function navigateTo(name) {
   });
 
   currentView = name;
+  if (typeof viewContainer._groundedCleanup === 'function') {
+    viewContainer._groundedCleanup();
+    viewContainer._groundedCleanup = null;
+  }
   viewContainer.innerHTML = '';
   await view.init(viewContainer, currentUser);
 }

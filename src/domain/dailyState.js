@@ -4,7 +4,6 @@
 
 import { getTodayWellnessCheckin } from '../services/wellness.js';
 import { getTodayWorkoutSession } from '../services/workouts.js';
-import { getTodayNutritionLog } from '../services/nutrition.js';
 import { getTodayJournalEntry } from '../services/journal.js';
 import { getTodayNicoLog } from '../services/nico.js';
 import { getHabitLog, getHabits, HABITS } from '../services/habits.js';
@@ -26,13 +25,6 @@ function normaliseWorkout(data) {
   return {
     ...data,
     status: data.status ?? 'planned'
-  };
-}
-
-function normaliseNutrition(data) {
-  return {
-    nourished: data?.nourished ?? false,
-    note: data?.note ?? ''
   };
 }
 
@@ -119,7 +111,7 @@ function buildCapabilities() {
   return {
     wellness: { available: true, surfaced: true },
     workout: { available: true, surfaced: true },
-    nutrition: { available: true, surfaced: true },
+    nutrition: { available: false, surfaced: false },
     habits: { available: true, surfaced: true },
     nico: { available: true, surfaced: true },
     journal: { available: true, surfaced: false },
@@ -150,7 +142,6 @@ export async function getDailyState(userId) {
   const [
     wellnessResult,
     workoutResult,
-    nutritionResult,
     journalResult,
     nicoResult,
     habitDefinitions,
@@ -160,7 +151,6 @@ export async function getDailyState(userId) {
   ] = await Promise.all([
     getTodayWellnessCheckin(userId),
     getTodayWorkoutSession(userId),
-    getTodayNutritionLog(userId),
     getTodayJournalEntry(userId),
     getTodayNicoLog(userId),
     resolveHabitDefinitions(userId),
@@ -173,7 +163,6 @@ export async function getDailyState(userId) {
     date: todayKey,
     wellness: normaliseWellness(wellnessResult),
     workout: normaliseWorkout(workoutResult),
-    nutrition: normaliseNutrition(nutritionResult),
     journal: normaliseJournal(journalResult),
     nico: normaliseNico(nicoResult),
     habits: normaliseHabits(habitsResult, habitDefinitions),

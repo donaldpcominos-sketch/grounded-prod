@@ -1,9 +1,9 @@
 import { saveTodayWellnessCheckin } from '../services/wellness.js';
 import { touchLastActive } from '../services/lastSeen.js';
-import { getTodayDisplay, showToast } from '../utils.js';
+import { getTodayDisplay, showToast, getTodayKey } from '../utils.js';
 import { fetchWeather } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
-import { HABITS } from '../services/habits.js';
+import { HABITS, toggleHabit } from '../services/habits.js';
 import { navigateTo } from '../router.js';
 import { getDailyState } from '../domain/dailyState.js';
 import { Skeletons } from '../skeletons.js';
@@ -430,12 +430,185 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-function renderView(user, state, returnMsg, weather, recommendations, reminderDecision, weatherBriefing, hasBriefing) {
+// ─── Ritual ───────────────────────────────────────────────────────────────────
+
+function ritualGreetingHTML(firstName) {
+  return `
+    <div class="ritual-step">
+      <p class="ritual-eyebrow">Grounded</p>
+      <h1 class="ritual-title">${getGreeting(firstName)}</h1>
+      <p class="ritual-subtitle">${getTodayDisplay()}</p>
+      <button class="ritual-begin-btn" id="ritualBeginBtn">Begin</button>
+    </div>
+  `;
+}
+
+function ritualMoodHTML() {
+  return `
+    <div class="ritual-step">
+      <p class="ritual-progress">1 of 2</p>
+      <h2 class="ritual-question">How are you<br>feeling today?</h2>
+      <div class="ritual-options ritual-options--grid">
+        ${MOOD_OPTIONS.map(o => `
+          <button class="ritual-option" data-value="${o.value}">
+            <span class="ritual-option-emoji">${o.emoji}</span>
+            <span class="ritual-option-label">${o.label}</span>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function ritualEnergyHTML() {
+  return `
+    <div class="ritual-step">
+      <p class="ritual-progress">2 of 2</p>
+      <h2 class="ritual-question">How's your<br>energy?</h2>
+      <div class="ritual-options ritual-options--row">
+        ${ENERGY_OPTIONS.map(o => `
+          <button class="ritual-option" data-value="${o.value}">
+            <span class="ritual-option-emoji">${o.emoji}</span>
+            <span class="ritual-option-label">${o.label}</span>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function ritualDoneHTML(mood, habitsState, workoutStreak) {
+  const m = MOOD_OPTIONS.find(o => o.value === mood);
+  return `
+    <div class="ritual-step ritual-step--done">
+      <div class="ritual-done-ring">
+        ${renderHeroRing(habitsState, workoutStreak)}
+      </div>
+      <p class="ritual-done-headline">You're set.</p>
+      ${m ? `<p class="ritual-done-mood">${m.emoji} ${m.label}</p>` : ''}
+    </div>
+  `;
+}
+
+// showRitual renders a full-screen overlay and walks through greeting →
+// mood → energy → done. Calls onComplete({ mood, energy }) when finished,
+// then fades out so the canvas renders underneath.
+function showRitual(container, user, state, onComplete) {
+  const firstName = user.displayName?.split(' ')[0] || 'there';
+  const ws = { mood: '', energy: '' };
+
+  const overlay = document.createElement('div');
+  overlay.className = 'ritual-overlay';
+  overlay.id = 'ritualOverlay';
+  document.body.appendChild(overlay);
+
+  const nav = document.querySelector('.bottom-nav');
+  if (nav) { nav.style.opacity = '0'; nav.style.pointerEvents = 'none'; }
+
+  // Set early cleanup so the router can dismiss the overlay on navigation
+  container._groundedCleanup = () => {
+    overlay.remove();
+    if (nav) { nav.style.opacity = ''; nav.style.pointerEvents = ''; }
+  };
+
+  function step(html, bindFn) {
+    overlay.classList.add('ritual-overlay--out');
+    setTimeout(() => {
+      overlay.innerHTML = html;
+      overlay.classList.remove('ritual-overlay--out');
+      requestAnimationFrame(() => bindFn());
+    }, 180);
+  }
+
+  function goMood() {
+    step(ritualMoodHTML(), () => {
+      overlay.querySelectorAll('.ritual-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          ws.mood = btn.dataset.value;
+          document.body.dataset.mood = ws.mood;
+          overlay.querySelectorAll('.ritual-option').forEach(b =>
+            b.classList.toggle('ritual-option--selected', b === btn)
+          );
+          saveTodayWellnessCheckin(user.uid, ws).catch(() => {});
+          setTimeout(goEnergy, 320);
+        });
+      });
+    });
+  }
+
+  function goEnergy() {
+    step(ritualEnergyHTML(), () => {
+      overlay.querySelectorAll('.ritual-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          ws.energy = btn.dataset.value;
+          overlay.querySelectorAll('.ritual-option').forEach(b =>
+            b.classList.toggle('ritual-option--selected', b === btn)
+          );
+          saveTodayWellnessCheckin(user.uid, ws).catch(() => {});
+          setTimeout(goDone, 320);
+        });
+      });
+    });
+  }
+
+  function goDone() {
+    step(ritualDoneHTML(ws.mood, state.habits, state.workout?.streak ?? 0), () => {
+      // Animate ring
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const ring = overlay.querySelector('#todayRingFill');
+        if (ring) {
+          const total = state.habits?.totalCount ?? 0;
+          const done  = state.habits?.completedCount ?? 0;
+          ring.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - (total > 0 ? done / total : 0));
+        }
+      }));
+
+      // Canvas renders underneath while overlay fades
+      setTimeout(() => {
+        onComplete({ mood: ws.mood, energy: ws.energy });
+        overlay.classList.add('ritual-overlay--exiting');
+        if (nav) { nav.style.opacity = ''; nav.style.pointerEvents = ''; }
+        setTimeout(() => { overlay.remove(); container._groundedCleanup = null; }, 400);
+      }, 1600);
+    });
+  }
+
+  // Step 0: greeting
+  overlay.innerHTML = ritualGreetingHTML(firstName);
+  overlay.querySelector('#ritualBeginBtn')?.addEventListener('click', goMood);
+}
+
+// ─── Canvas habits ────────────────────────────────────────────────────────────
+
+function renderCanvasHabits(habitsState) {
+  const items = habitsState?.items ?? [];
+  if (!items.length) return '';
+
+  return `
+    <section class="canvas-habits" id="canvasHabits">
+      <p class="canvas-section-label">Today's habits</p>
+      <div class="canvas-habit-pills">
+        ${items.map(h => `
+          <button
+            class="canvas-habit-pill${h.completed ? ' canvas-habit-pill--done' : ''}"
+            data-habit-id="${h.id}"
+            aria-label="${h.name}${h.completed ? ' — done' : ''}"
+            aria-pressed="${h.completed}"
+          >
+            <span class="canvas-habit-pill-emoji">${h.emoji || '●'}</span>
+          </button>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderView(user, state, returnMsg, weather, recommendations, reminderDecision, weatherBriefing, hasBriefing, canvasMode = false) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
   const workoutStreak = state.workout?.streak ?? 0;
 
   return `
-    <main class="view-scroll">
+    <main class="view-scroll"${canvasMode ? ' data-mode="canvas"' : ''}>
       <div class="view-inner">
 
 <header class="today-hero">
@@ -459,9 +632,11 @@ function renderView(user, state, returnMsg, weather, recommendations, reminderDe
         ${renderWeatherCard(weather, hasBriefing)}
         ${renderQuickCheckin(state.wellness.mood || '', state.wellness.energy || '')}
 
+        ${canvasMode ? renderCanvasHabits(state.habits) : ''}
+
         <div class="card-stack">
           ${renderWorkoutTile(state.workout, state)}
-          ${renderHabitsTile(state.habits)}
+          ${canvasMode ? '' : renderHabitsTile(state.habits)}
         </div>
 
         <p id="wellnessStatus" class="status-text mt-4 px-1"></p>
@@ -533,6 +708,18 @@ export const TodayView = {
 
     const returnMsg = _returnDismissed ? null : getReturnMessage(state.lastSeen?.gapHours ?? 0);
 
+    // ── Ritual — show once per day when check-in hasn't been done ─────────────
+    if (!state.wellness.mood) {
+      container.innerHTML = '';
+      await new Promise(resolve => {
+        showRitual(container, user, state, ({ mood, energy }) => {
+          state.wellness.mood   = mood;
+          state.wellness.energy = energy;
+          resolve();
+        });
+      });
+    }
+
     const viewState = {
       ...state,
       wellness: { ...state.wellness },
@@ -552,6 +739,7 @@ export const TodayView = {
       reminderDecision,
       autoShowBriefing,
       !!_sessionWeatherBriefing,
+      true, // canvasMode — always on
     );
 
     // ── Mood ambient tint — restore from saved state on every load ───────────
@@ -628,6 +816,60 @@ export const TodayView = {
 
       document.getElementById('habitsTileBtn')?.addEventListener('click', () => {
         navigateTo('habits');
+      });
+    }
+
+    function syncRing() {
+      const ring = document.getElementById('todayRingFill');
+      if (!ring) return;
+      const total = viewState.habits?.totalCount ?? 0;
+      const done  = viewState.habits?.completedCount ?? 0;
+      ring.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - (total > 0 ? done / total : 0));
+    }
+
+    function rebuildCanvasHabits() {
+      const section = document.getElementById('canvasHabits');
+      if (!section) return;
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderCanvasHabits(viewState.habits);
+      const next = fresh.firstElementChild;
+      if (next) {
+        section.replaceWith(next);
+        bindCanvasHabits();
+      }
+    }
+
+    function bindCanvasHabits() {
+      document.querySelectorAll('.canvas-habit-pill').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const habitId = btn.dataset.habitId;
+          const wasDone = btn.classList.contains('canvas-habit-pill--done');
+          const habit   = viewState.habits?.items?.find(h => h.id === habitId);
+          if (!habit) return;
+
+          const newValue = !wasDone;
+          btn.classList.toggle('canvas-habit-pill--done', newValue);
+          btn.setAttribute('aria-pressed', String(newValue));
+
+          // Optimistic update
+          habit.completed = newValue;
+          viewState.habits.completedCount = viewState.habits.items.filter(h => h.completed).length;
+          syncRing();
+          rebuildSummary();
+          rebuildPriorityActions();
+
+          try {
+            await toggleHabit(user.uid, getTodayKey(), habitId, newValue, { name: habit.name, emoji: habit.emoji });
+            window.dispatchEvent(new CustomEvent('grounded:habits-updated', { detail: { source: 'today-view' } }));
+          } catch {
+            // Revert on error
+            habit.completed = wasDone;
+            viewState.habits.completedCount = viewState.habits.items.filter(h => h.completed).length;
+            btn.classList.toggle('canvas-habit-pill--done', wasDone);
+            btn.setAttribute('aria-pressed', String(wasDone));
+            syncRing();
+          }
+        });
       });
     }
 
@@ -781,6 +1023,8 @@ export const TodayView = {
         hideReminderBannerIfDone(mergedState);
 
         rebuildHabitsTile();
+        rebuildCanvasHabits();
+        syncRing();
         rebuildSummary();
         rebuildPriorityActions();
       } catch {
@@ -902,6 +1146,7 @@ export const TodayView = {
 
     bindPriorityActions();
     bindStaticTiles();
+    bindCanvasHabits();
     bindQci();
     bindReminderBanner();
     bindWeatherBriefingBanner();
@@ -919,6 +1164,9 @@ export const TodayView = {
 
     container._groundedCleanup = () => {
       window.removeEventListener('grounded:habits-updated', handleHabitsUpdated);
+      document.getElementById('ritualOverlay')?.remove();
+      const navEl = document.querySelector('.bottom-nav');
+      if (navEl) { navEl.style.opacity = ''; navEl.style.pointerEvents = ''; }
     };
   }
 };
