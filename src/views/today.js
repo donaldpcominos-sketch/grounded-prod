@@ -83,26 +83,18 @@ function uvBadgeClass(uv) {
   return 'weather-uv-badge';
 }
 
-// renderWeatherCard accepts hasBriefing — a boolean indicating whether a
-// valid briefing exists for this session. When true, a subtle "View briefing"
-// button is appended at the bottom of the card so the user can re-open the
-// briefing at any time, independent of whether the auto-banner is visible.
+// renderWeatherStrip — compact 1-line weather with expandable forecast.
+// Keeps id="weatherCard" so the briefing banner insertion still works.
 
-function renderWeatherCard(weather, hasBriefing) {
-  if (!weather) {
-    return `
-      <div class="weather-card" id="weatherCard">
-        <p class="card-label">Weather</p>
-        <p class="card-body mt-1" style="color:var(--color-ink-4);">Unavailable — check your connection.</p>
-      </div>
-    `;
-  }
+function renderWeatherStrip(weather, hasBriefing) {
+  if (!weather) return '';
 
   const { currentTemp, currentEmoji, currentDesc, currentUv, forecast, walkWindow, fromCache, cacheAgeMs } = weather;
-  const condClass = weatherConditionClass(currentDesc, currentEmoji);
+  const condClass = weatherConditionClass(currentDesc, currentEmoji)
+    .replace('weather-card--', 'weather-strip--');
 
   const staleNote = fromCache
-    ? `<p class="weather-stale-note">Offline — last updated ${Math.round(cacheAgeMs / 60000)} min ago</p>`
+    ? `<span class="weather-strip-stale">Offline</span>`
     : '';
 
   const forecastHtml = (forecast || []).map(d => `
@@ -113,30 +105,53 @@ function renderWeatherCard(weather, hasBriefing) {
     </div>
   `).join('');
 
-  // "View briefing" — present whenever a briefing exists for this session,
-  // regardless of whether the auto-banner has been dismissed.
   const viewBriefingBtn = hasBriefing
-    ? `<button class="weather-briefing-link" id="viewWeatherBriefingBtn" aria-label="View today&#39;s weather briefing">View briefing</button>`
+    ? `<button class="weather-briefing-link" id="viewWeatherBriefingBtn" aria-label="View today's weather briefing">View briefing</button>`
     : '';
 
   return `
-    <div class="weather-card ${condClass}" id="weatherCard">
-      <div class="weather-main">
-        <div class="weather-current">
-          <span class="weather-emoji">${currentEmoji}</span>
-          <div class="weather-temp-block">
-            <p class="weather-temp">${currentTemp}&deg;</p>
-            <p class="weather-desc">${currentDesc}</p>
-          </div>
+    <div class="weather-strip ${condClass}" id="weatherCard">
+      <div class="weather-strip-main">
+        <div class="weather-strip-left">
+          <span class="weather-strip-emoji">${currentEmoji}</span>
+          <span class="weather-strip-temp">${currentTemp}&deg;</span>
+          <span class="weather-strip-desc">${currentDesc}</span>
         </div>
-        <span class="${uvBadgeClass(currentUv)}">UV ${currentUv}</span>
+        <div class="weather-strip-right">
+          <span class="${uvBadgeClass(currentUv)}">UV ${currentUv}</span>
+          ${staleNote}
+          <button class="weather-strip-toggle" id="weatherForecastToggle" aria-expanded="false" aria-label="Show forecast">↓</button>
+        </div>
       </div>
-      ${walkWindow ? `<div class="weather-walk-window">${walkWindow}</div>` : ''}
-      <div class="weather-forecast" id="weatherForecast" hidden>${forecastHtml}</div>
-      <button class="weather-forecast-toggle" id="weatherForecastToggle" aria-expanded="false">Show forecast</button>
-      ${staleNote}
-      ${viewBriefingBtn}
+      <div id="weatherForecast" hidden>
+        <div class="weather-strip-expanded">
+          ${walkWindow ? `<p class="weather-strip-walk">${walkWindow}</p>` : ''}
+          <div class="weather-forecast">${forecastHtml}</div>
+          ${viewBriefingBtn}
+        </div>
+      </div>
     </div>
+  `;
+}
+
+// ─── Plan tile ────────────────────────────────────────────────────────────────
+
+function renderPlanTile(wellness) {
+  const hasCheckin = wellness?.mood && wellness?.energy;
+  const label = hasCheckin ? 'Plan my afternoon' : 'Find somewhere to go';
+  const sub = hasCheckin
+    ? 'Get a tailored suggestion based on how you\'re feeling.'
+    : 'Personalised activity suggestions for you and Nico.';
+
+  return `
+    <button class="plan-tile" id="planTileBtn" aria-label="Open activity planner">
+      <div class="plan-tile-left">
+        <p class="plan-tile-eyebrow">Activity planner</p>
+        <p class="plan-tile-label">${label}</p>
+        <p class="plan-tile-sub">${sub}</p>
+      </div>
+      <span class="workout-tile-arrow">→</span>
+    </button>
   `;
 }
 
@@ -452,17 +467,19 @@ function renderView(user, state, returnMsg, weather, recommendations, reminderDe
   ${getTodaySummary(state)}
 </p>
 
-        ${renderReturnCard(returnMsg)}
-        ${renderWeatherBriefingBanner(weatherBriefing)}
-        ${renderReminderBanner(reminderDecision)}
-        ${renderPriorityActions(recommendations)}
-        ${renderWeatherCard(weather, hasBriefing)}
         ${renderQuickCheckin(state.wellness.mood || '', state.wellness.energy || '')}
+        ${renderWeatherStrip(weather, hasBriefing)}
+        ${renderPriorityActions(recommendations)}
 
         <div class="card-stack">
           ${renderWorkoutTile(state.workout, state)}
           ${renderHabitsTile(state.habits)}
+          ${renderPlanTile(state.wellness)}
         </div>
+
+        ${renderReturnCard(returnMsg)}
+        ${renderWeatherBriefingBanner(weatherBriefing)}
+        ${renderReminderBanner(reminderDecision)}
 
         <p id="wellnessStatus" class="status-text mt-4 px-1"></p>
 
@@ -628,6 +645,19 @@ export const TodayView = {
 
       document.getElementById('habitsTileBtn')?.addEventListener('click', () => {
         navigateTo('habits');
+      });
+
+      document.getElementById('planTileBtn')?.addEventListener('click', () => {
+        // Pre-fill plan context from today's check-in so the plan flow can skip
+        // the "How are you feeling?" step — it's already been answered.
+        const mood   = viewState.wellness?.mood;
+        const energy = viewState.wellness?.energy;
+        if (mood || energy) {
+          let planEnergy = 'good';
+          if (energy === 'low' || mood === 'stretched') planEnergy = 'low';
+          window._groundedPlanQuickContext = { parentEnergy: planEnergy };
+        }
+        navigateTo('today-plans');
       });
     }
 
@@ -913,8 +943,8 @@ export const TodayView = {
       if (!forecast || !toggle) return;
       const nowHidden = !forecast.hidden;
       forecast.hidden = nowHidden;
-      toggle.textContent = nowHidden ? 'Show forecast' : 'Hide forecast';
       toggle.setAttribute('aria-expanded', String(!nowHidden));
+      toggle.classList.toggle('weather-strip-toggle--open', !nowHidden);
     });
 
     container._groundedCleanup = () => {

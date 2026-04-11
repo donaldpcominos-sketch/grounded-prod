@@ -30,6 +30,11 @@ import {
 let _lastResults = null;
 let _lastContext = null;
 
+// Quick-start context — set by the Today screen "Plan my afternoon" tile.
+// When present, the flow skips the parentEnergy step (already known from
+// the Today check-in). Cleared after being consumed.
+let _quickStartContext = null;
+
 // ─── Bottom sheet helpers ─────────────────────────────────────────────────────
 //
 // No shared helpers exist in the codebase — these are self-contained here,
@@ -290,6 +295,11 @@ function decodeOutingType(outingType, answers) {
 async function collectAnswers() {
   const answers = {};
 
+  // Consume quick-start context if the Today tile pre-filled parentEnergy.
+  const quickCtx = _quickStartContext;
+  _quickStartContext = null;
+  window._groundedPlanQuickContext = null;
+
   // ── Step 0: outing type ───────────────────────────────────────────────────
   let outingType = await stepOuting();
   if (outingType === null) return null;
@@ -309,21 +319,25 @@ async function collectAnswers() {
     if (babyState !== null) answers.babyState = babyState;
   }
 
-  // ── Step 2: parent energy ─────────────────────────────────────────────────
-  let parentEnergy = await stepParentEnergy();
-  while (parentEnergy === null) {
-    // Back → re-run baby state (or outing if no Nico)
-    if (answers.withNico) {
-      const bs = await stepBabyState();
-      if (bs !== null) answers.babyState = bs;
-    } else {
-      outingType = await stepOuting();
-      if (outingType === null) return null;
-      decodeOutingType(outingType, answers);
+  // ── Step 2: parent energy — skipped when already known from check-in ──────
+  if (quickCtx?.parentEnergy) {
+    answers.parentEnergy = quickCtx.parentEnergy;
+  } else {
+    let parentEnergy = await stepParentEnergy();
+    while (parentEnergy === null) {
+      // Back → re-run baby state (or outing if no Nico)
+      if (answers.withNico) {
+        const bs = await stepBabyState();
+        if (bs !== null) answers.babyState = bs;
+      } else {
+        outingType = await stepOuting();
+        if (outingType === null) return null;
+        decodeOutingType(outingType, answers);
+      }
+      parentEnergy = await stepParentEnergy();
     }
-    parentEnergy = await stepParentEnergy();
+    answers.parentEnergy = parentEnergy;
   }
-  answers.parentEnergy = parentEnergy;
 
   // ── Step 3: priority ──────────────────────────────────────────────────────
   let priority = await stepPriority();
@@ -666,6 +680,19 @@ export const TodayPlansView = {
       }
     } catch {
       // Firestore unavailable — fall through to idle prompt
+    }
+
+    // Check for quick-start context set by the Today "Plan my afternoon" tile.
+    // Transfer from window global to module state, then auto-start the flow.
+    if (window._groundedPlanQuickContext) {
+      _quickStartContext = window._groundedPlanQuickContext;
+      window._groundedPlanQuickContext = null;
+      container.innerHTML = renderView('idle', null, null);
+      bindStart(container, user.uid, profile, weatherData);
+      // Auto-trigger immediately so Cicely only has to tap once
+      const startBtn = container.querySelector('#todayPlanStartBtn');
+      if (startBtn) startBtn.click();
+      return;
     }
 
     container.innerHTML = renderView('idle', null, null);
