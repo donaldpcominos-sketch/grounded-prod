@@ -86,63 +86,61 @@ body {
 }
 
 .view-inner {
-  padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+  padding: 24px 20px calc(90px + env(safe-area-inset-bottom));
 }
 
-/* ─── Bottom nav ─────────────────────────────────────────────────────────────── */
+/* ─── Bottom nav — floating pill ─────────────────────────────────────────────── */
 
 .bottom-nav {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  max-width: 480px;
-  margin: 0 auto;
-  height: calc(var(--nav-height) + env(safe-area-inset-bottom));
-  padding-bottom: env(safe-area-inset-bottom);
-  background: var(--color-surface);
-  border-top: 1px solid var(--color-border);
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 32px);
+  max-width: 360px;
+  height: 60px;
+  background: rgba(250, 248, 246, 0.96);
+  border: 1px solid rgba(228, 221, 214, 0.7);
+  border-radius: 30px;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.10),
+    0 1px 4px  rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   display: flex;
   align-items: center;
   justify-content: space-around;
+  padding: 0 4px;
   z-index: 100;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 .nav-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 6px 8px;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 16px;
   border: none;
   background: none;
   cursor: pointer;
   color: var(--color-ink-4);
-  transition: color 0.2s ease;
-  min-width: 60px;
+  transition: color 0.18s ease;
   flex: 1;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .nav-item:active {
-  opacity: 0.7;
-}
-
-.nav-icon-wrap {
-  width: 44px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 15px;
-  transition: background 0.2s ease;
+  opacity: 0.55;
+  transform: scale(0.92);
+  transition: opacity 0.08s ease, transform 0.08s ease;
 }
 
 .nav-icon {
   width: 22px;
   height: 22px;
   display: block;
+  transition: transform 0.18s ease;
 }
 
 .nav-icon svg {
@@ -150,18 +148,26 @@ body {
   height: 100%;
 }
 
-.nav-label {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0;
+.nav-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-ink);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  flex-shrink: 0;
 }
 
 .nav-active {
   color: var(--color-ink);
 }
 
-.nav-active .nav-icon-wrap {
-  background: var(--color-surface-2);
+.nav-active .nav-dot {
+  opacity: 1;
+}
+
+.nav-active .nav-icon {
+  transform: scale(1.08);
 }
 
 /* ─── Page header ────────────────────────────────────────────────────────────── */

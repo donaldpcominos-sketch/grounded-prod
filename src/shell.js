@@ -63,10 +63,8 @@ export function renderShell(user) {
             data-nav="${item.name}"
             aria-label="${item.label}"
           >
-            <span class="nav-icon-wrap">
-              <span class="nav-icon">${item.icon}</span>
-            </span>
-            <span class="nav-label">${item.label}</span>
+            <span class="nav-icon">${item.icon}</span>
+            <span class="nav-dot" aria-hidden="true"></span>
           </button>
         `).join('')}
       </nav>
