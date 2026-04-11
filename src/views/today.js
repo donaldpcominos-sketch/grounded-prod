@@ -1,8 +1,6 @@
 import { saveTodayWellnessCheckin } from '../services/wellness.js';
 import { touchLastActive } from '../services/lastSeen.js';
-import { getSuggestionsForEnergy } from '../data/nutrition.js';
 import { getTodayDisplay, showToast } from '../utils.js';
-import { getWeekSummary } from '../services/progress.js';
 import { fetchWeather } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
 import { HABITS } from '../services/habits.js';
@@ -13,7 +11,6 @@ import { getTodaySummary } from '../domain/summary.js';
 import { getDayContext } from '../domain/dayContext.js';
 import {
   getReminderDecision,
-  getMeaningfulEngagement,
   classifyEngagementState,
   buildWeatherBriefingMessage,
   getWeatherBriefingDecision,
@@ -82,7 +79,8 @@ function renderWeatherCard(weather, hasBriefing) {
         <span class="${uvBadgeClass(currentUv)}">UV ${currentUv}</span>
       </div>
       ${walkWindow ? `<div class="weather-walk-window">${walkWindow}</div>` : ''}
-      <div class="weather-forecast">${forecastHtml}</div>
+      <div class="weather-forecast" id="weatherForecast" hidden>${forecastHtml}</div>
+      <button class="weather-forecast-toggle" id="weatherForecastToggle" aria-expanded="false">Show forecast</button>
       ${staleNote}
       ${viewBriefingBtn}
     </div>
@@ -307,39 +305,6 @@ function renderPriorityActions(recommendations, state) {
   `;
 }
 
-// ─── Nourishment card ─────────────────────────────────────────────────────────
-
-function energyEmoji(energy) {
-  return { low: '🌙', medium: '☀️', high: '⚡' }[energy] || '';
-}
-
-function renderNourishmentCard(energy) {
-  const suggestions = getSuggestionsForEnergy(energy || 'medium', 3);
-  const energyLabel = energy
-    ? `${energyEmoji(energy)} ${energy.charAt(0).toUpperCase() + energy.slice(1)} energy`
-    : 'Today';
-
-  return `
-    <div class="card" id="nourishmentCard">
-      <div class="card-row">
-        <div>
-          <p class="card-label">Nourishment</p>
-          <p class="card-body mt-1">Ideas to eat well today.</p>
-        </div>
-        <span class="badge">${energyLabel}</span>
-      </div>
-      <div class="nutrition-suggestions mt-4">
-        ${suggestions.map(s => `
-          <div class="nutrition-suggestion">
-            <p class="nutrition-suggestion-label">${s.label}</p>
-            <p class="nutrition-suggestion-desc">${s.desc}</p>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `;
-}
-
 // ─── Today's workout tile ─────────────────────────────────────────────────────
 
 function getTypeTag(type) {
@@ -402,122 +367,27 @@ function getWorkoutTileFocus(split, context, isDone) {
 
 // ─── Habits entry tile ────────────────────────────────────────────────────────
 
-function getHabitsProgressMeta(habitsState, habitsProgress) {
-  const total    = habitsState?.totalCount ?? HABITS.length;
-  const doneCount = habitsState?.completedCount ?? 0;
-
-  const activeDays           = habitsProgress?.activeHabitsDays ?? 0;
-  const perfectDays          = habitsProgress?.activePerfectHabitDays ?? 0;
-  const perfectRate          = habitsProgress?.activePerfectHabitsCompletionRate ?? 0;
-  const currentPerfectStreak = habitsProgress?.activePerfectHabitCurrentStreak ?? 0;
-  const bestPerfectStreak    = habitsProgress?.activePerfectHabitBestStreak ?? 0;
-
-  let headline = '';
-  if (perfectDays === 7) {
-    headline = '7/7 perfect days — golden week.';
-  } else if (doneCount === total && total > 0) {
-    headline = 'Perfect today — keep the streak alive.';
-  } else if (currentPerfectStreak >= 3) {
-    headline = `${currentPerfectStreak}-day perfect streak — beautiful rhythm.`;
-  } else if (doneCount > 0) {
-    headline = 'Nice start today — keep building toward a perfect day.';
-  } else if (activeDays >= 4) {
-    headline = 'Strong week so far — today could become another perfect day.';
-  } else {
-    headline = 'Start small today and build toward a perfect day.';
-  }
-
-  let streakNote = '';
-  if (currentPerfectStreak > 0) {
-    if (currentPerfectStreak < bestPerfectStreak) {
-      const remaining = bestPerfectStreak - currentPerfectStreak;
-      streakNote = `Perfect streak: ${currentPerfectStreak} day${currentPerfectStreak === 1 ? '' : 's'} · ${remaining} more to beat your best`;
-    } else if (currentPerfectStreak === bestPerfectStreak && bestPerfectStreak > 0) {
-      streakNote = `Perfect streak: ${currentPerfectStreak} day${currentPerfectStreak === 1 ? '' : 's'} · Matching your best`;
-    } else {
-      streakNote = `Perfect streak: ${currentPerfectStreak} day${currentPerfectStreak === 1 ? '' : 's'} · New best`;
-    }
-  } else if (bestPerfectStreak > 0) {
-    streakNote = `Best perfect streak: ${bestPerfectStreak} day${bestPerfectStreak === 1 ? '' : 's'}`;
-  }
-
-  return {
-    headline,
-    stats: [
-      `${activeDays}/7 active days`,
-      `${perfectDays}/7 perfect days this week`
-    ],
-    streakNote,
-    perfectDays,
-    perfectRate
-  };
-}
-
-function renderHabitsTile(habitsState, habitsProgress) {
+function renderHabitsTile(habitsState) {
   const doneCount = habitsState?.completedCount ?? 0;
   const total     = habitsState?.totalCount ?? HABITS.length;
   const allDone   = total > 0 && doneCount === total;
-
-  const progressMeta  = getHabitsProgressMeta(habitsState, habitsProgress);
-  const perfectProgress = progressMeta.perfectDays / 7;
-
-  const innerCirc   = 87.96;
-  const innerFilled = total > 0 ? (doneCount / total) * innerCirc : 0;
-
-  const tileClasses = [
-    'habits-entry-tile',
-    progressMeta.perfectDays === 7 ? 'habits-entry-tile--gold' : ''
-  ].join(' ');
+  const pct       = total > 0 ? Math.round((doneCount / total) * 100) : 0;
 
   return `
     <button
-      class="${tileClasses}"
+      class="habits-entry-tile"
       id="habitsTileBtn"
       aria-label="Open habits tracker"
-      style="--perfect-progress:${perfectProgress}"
     >
       <div class="habits-tile-top">
         <div>
           <p class="habits-tile-eyebrow">Daily habits</p>
           <p class="habits-tile-count">${doneCount} <span>of ${total}</span></p>
         </div>
-
-        <div class="habits-tile-right">
-          <div class="habits-tile-ring">
-            <svg width="42" height="42" viewBox="0 0 36 36" class="habits-ring-svg">
-              <circle class="habits-ring-bg" cx="18" cy="18" r="14" fill="none"/>
-              <circle
-                class="habits-ring-fill"
-                cx="18" cy="18" r="14" fill="none"
-                stroke="${allDone ? '#5a7a5a' : 'var(--color-ink-2)'}"
-                stroke-dasharray="${innerFilled.toFixed(2)} ${innerCirc.toFixed(2)}"
-                stroke-dashoffset="0"
-              />
-            </svg>
-            ${allDone
-              ? '<span class="habits-ring-check">✓</span>'
-              : `<span class="habits-ring-pct">${Math.round((doneCount / total) * 100)}%</span>`}
-          </div>
-          <span class="workout-tile-arrow">→</span>
-        </div>
+        <span class="workout-tile-arrow">${allDone ? '✓' : '→'}</span>
       </div>
-
-      <div class="habits-tile-preview">
-        ${(habitsState?.items || []).slice(0, 8).map(h => {
-          const done = h.completed === true;
-          return `<span class="habits-preview-dot${done ? ' habits-preview-dot--done' : ''}" aria-hidden="true">${h.emoji}</span>`;
-        }).join('')}
-        ${total > 8 ? `<span class="habits-preview-more">+${total - 8}</span>` : ''}
-      </div>
-
-      <div class="habits-tile-progress">
-        <p class="habits-tile-note">${progressMeta.headline}</p>
-        <div class="habits-tile-stats">
-          ${progressMeta.stats.map(stat => `<span class="habits-tile-stat">${stat}</span>`).join('')}
-        </div>
-        ${progressMeta.streakNote
-          ? `<p class="habits-tile-streak-note">${progressMeta.streakNote}</p>`
-          : ''}
+      <div class="habits-tile-bar-wrap">
+        <div class="habits-tile-bar" style="width:${pct}%"></div>
       </div>
     </button>
   `;
@@ -540,7 +410,7 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-function renderView(user, state, returnMsg, weather, recommendations, weekSummary, reminderDecision, weatherBriefing, hasBriefing) {
+function renderView(user, state, returnMsg, weather, recommendations, reminderDecision, weatherBriefing, hasBriefing) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
 
   return `
@@ -571,8 +441,7 @@ function renderView(user, state, returnMsg, weather, recommendations, weekSummar
 
         <div class="card-stack">
           ${renderWorkoutTile(state.workout, state)}
-          ${renderHabitsTile(state.habits, weekSummary)}
-          ${renderNourishmentCard(state.wellness.energy || '')}
+          ${renderHabitsTile(state.habits)}
         </div>
 
         <p id="wellnessStatus" class="status-text mt-4 px-1"></p>
@@ -588,10 +457,9 @@ export const TodayView = {
   async init(container, user) {
     container.innerHTML = '<div class="loading-state"><p>Loading your dashboard…</p></div>';
 
-    const [state, weather, weekSummary, notifData] = await Promise.all([
+    const [state, weather, notifData] = await Promise.all([
       getDailyState(user.uid),
       fetchWeather().catch(() => null),
-      getWeekSummary(user.uid).catch(() => null),
       loadNotificationData(user.uid).catch(() => ({ prefs: null, notifState: null })),
     ]);
 
@@ -651,8 +519,6 @@ export const TodayView = {
       habits:   { ...state.habits },
     };
 
-    let habitsWeekSummary = weekSummary;
-
     function getRecommendations() {
       return getTodayRecommendations(viewState);
     }
@@ -663,7 +529,6 @@ export const TodayView = {
       returnMsg,
       weather,
       getRecommendations(),
-      habitsWeekSummary,
       reminderDecision,
       autoShowBriefing,
       !!_sessionWeatherBriefing,
@@ -753,8 +618,8 @@ export const TodayView = {
         const existing = document.getElementById('weatherBriefingBanner');
         if (existing) {
           existing.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          existing.classList.add('reminder-banner--dismissing'); // reuse animation class for a pulse
-          setTimeout(() => existing.classList.remove('reminder-banner--dismissing'), 300);
+          existing.classList.add('reminder-banner--pulse');
+          setTimeout(() => existing.classList.remove('reminder-banner--pulse'), 400);
           return;
         }
 
@@ -833,21 +698,13 @@ export const TodayView = {
       if (!tile) return;
 
       const fresh = document.createElement('div');
-      fresh.innerHTML = renderHabitsTile(viewState.habits, habitsWeekSummary);
+      fresh.innerHTML = renderHabitsTile(viewState.habits);
       const next = fresh.firstElementChild;
 
       if (next) {
         tile.replaceWith(next);
         bindStaticTiles();
       }
-    }
-
-    function rebuildNourishmentCard() {
-      const card = document.getElementById('nourishmentCard');
-      if (!card) return;
-      const fresh = document.createElement('div');
-      fresh.innerHTML = renderNourishmentCard(wellnessState.energy);
-      card.replaceWith(fresh.firstElementChild);
     }
 
     function rebuildSummary() {
@@ -860,13 +717,11 @@ export const TodayView = {
       const seq = ++habitsRefreshSeq;
 
       try {
-        const freshState       = await getDailyState(user.uid);
-        const freshWeekSummary = await getWeekSummary(user.uid);
+        const freshState = await getDailyState(user.uid);
 
         if (seq !== habitsRefreshSeq) return;
 
-        viewState.habits  = freshState.habits;
-        habitsWeekSummary = freshWeekSummary;
+        viewState.habits = freshState.habits;
 
         if (freshState.habits?.completedCount > 0) {
           recordMeaningfulEngagement(user.uid).catch(() => {});
@@ -885,18 +740,16 @@ export const TodayView = {
 
     function refreshTodayUI(options = {}) {
       const {
-        qci           = true,
-        summary       = true,
+        qci             = true,
+        summary         = true,
         priorityActions = true,
-        nourishment   = true,
-        workout       = true,
-        habits        = true
+        workout         = true,
+        habits          = true
       } = options;
 
       if (qci)             rebuildQci();
       if (summary)         rebuildSummary();
       if (priorityActions) rebuildPriorityActions();
-      if (nourishment)     rebuildNourishmentCard();
       if (workout)         rebuildWorkoutTile();
       if (habits)          rebuildHabitsTile();
     }
@@ -958,7 +811,6 @@ export const TodayView = {
           qci:            false,
           summary:        true,
           priorityActions: true,
-          nourishment:    true,
           workout:        true,
           habits:         true
         });
@@ -988,6 +840,16 @@ export const TodayView = {
     bindReminderBanner();
     bindWeatherBriefingBanner();
     bindViewBriefingButton();
+
+    document.getElementById('weatherForecastToggle')?.addEventListener('click', () => {
+      const forecast = document.getElementById('weatherForecast');
+      const toggle   = document.getElementById('weatherForecastToggle');
+      if (!forecast || !toggle) return;
+      const nowHidden = !forecast.hidden;
+      forecast.hidden = nowHidden;
+      toggle.textContent = nowHidden ? 'Show forecast' : 'Hide forecast';
+      toggle.setAttribute('aria-expanded', String(!nowHidden));
+    });
 
     container._groundedCleanup = () => {
       window.removeEventListener('grounded:habits-updated', handleHabitsUpdated);

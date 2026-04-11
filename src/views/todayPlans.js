@@ -565,7 +565,7 @@ function renderView(phase, recommendations, context) {
         <header class="page-header">
           <p class="eyebrow">Grounded</p>
           <h1 class="page-title">Today's plan</h1>
-          <p class="page-subtitle">Where to take Nico right now.</p>
+          <p class="page-subtitle">Find somewhere good to go today.</p>
         </header>
         <section class="${wrapperClass}" id="todayPlanCard">
           ${content}

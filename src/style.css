@@ -3386,6 +3386,19 @@ body {
   text-align: right;
 }
 
+.weather-forecast-toggle {
+  display: block;
+  margin-top: 12px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--color-ink-3);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .weather-skeleton {
   background: var(--color-surface);
   border: 1px solid var(--color-border-soft);
@@ -3719,6 +3732,22 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* Simple completion bar for the simplified habits tile */
+.habits-tile-bar-wrap {
+  height: 4px;
+  background: var(--color-surface-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.habits-tile-bar {
+  height: 100%;
+  background: var(--color-ink-2);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  min-width: 0;
 }
 
 .habits-tile-eyebrow {
@@ -4756,6 +4785,16 @@ body {
 .reminder-banner--dismissing {
   animation: reminder-banner-out 0.3s ease both;
   pointer-events: none;
+}
+
+@keyframes reminder-banner-pulse {
+  0%   { opacity: 1; }
+  40%  { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+.reminder-banner--pulse {
+  animation: reminder-banner-pulse 0.4s ease;
 }
 
 @keyframes reminder-banner-out {
