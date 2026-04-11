@@ -242,65 +242,29 @@ function renderQuickCheckin(mood, energy) {
 
 // ─── Priority actions ─────────────────────────────────────────────────────────
 
-function getPriorityActionsMeta(state) {
-  const context = getDayContext(state);
-
-  switch (context.tone) {
-    case 'welcome-back':
-      return { title: 'Start gently', subtitle: 'A few small suggestions to help you ease back in.' };
-    case 'gentle-reset':
-      return { title: 'Gentle reset', subtitle: 'A few simple suggestions to help steady the day.' };
-    case 'check-in-first':
-      return { title: 'Start here', subtitle: 'A quick check-in will help shape the rest of the day.' };
-    case 'protect-momentum':
-      return { title: 'Keep it steady', subtitle: 'You already have momentum this week — keep today realistic.' };
-    case 'build-momentum':
-      return { title: 'Keep the rhythm going', subtitle: 'A few well-placed actions could carry your momentum forward.' };
-    case 'start-small':
-      return { title: 'Start small', subtitle: 'One or two simple actions are enough to shift the day.' };
-    case 'reset-week':
-      return { title: 'Small reset', subtitle: 'A couple of grounded actions could help reset the tone of the week.' };
-    case 'low-energy':
-      return { title: 'Keep it light', subtitle: 'Focus on the essentials and let that be enough for today.' };
-    case 'high-energy-move':
-      return { title: 'Use the energy well', subtitle: 'A few intentional actions could make today feel really good.' };
-    case 'steady-day':
-    default:
-      return { title: 'Priority actions', subtitle: 'A few gentle suggestions for today.' };
-  }
-}
-
-function renderPriorityActions(recommendations, state) {
+function renderPriorityActions(recommendations) {
   if (!Array.isArray(recommendations) || recommendations.length === 0) return '';
 
-  const meta = getPriorityActionsMeta(state);
+  // Show at most 2 suggestions — enough to nudge, not enough to overwhelm
+  const recs = recommendations.slice(0, 2);
 
   return `
-    <section class="card" id="priorityActionsCard">
-      <div class="card-row">
-        <div>
-          <p class="card-label">${meta.title}</p>
-          <p class="card-body mt-1">${meta.subtitle}</p>
-        </div>
-      </div>
-
-      <div class="mt-4">
-        ${recommendations.map(rec => `
-          <button
-            type="button"
-            class="priority-action"
-            data-rec-route="${rec.route || ''}"
-            data-rec-target="${rec.targetId || ''}"
-            aria-label="${rec.title}"
-          >
-            <div class="priority-action-copy">
-              <p class="priority-action-title">${rec.title}</p>
-              <p class="priority-action-text">${rec.message}</p>
-            </div>
-            <span class="priority-action-cta">${rec.actionLabel || 'Open'} →</span>
-          </button>
-        `).join('')}
-      </div>
+    <section class="priority-actions-list" id="priorityActionsCard">
+      ${recs.map(rec => `
+        <button
+          type="button"
+          class="priority-action"
+          data-rec-route="${rec.route || ''}"
+          data-rec-target="${rec.targetId || ''}"
+          aria-label="${rec.title}"
+        >
+          <div class="priority-action-copy">
+            <p class="priority-action-title">${rec.title}</p>
+            <p class="priority-action-text">${rec.message}</p>
+          </div>
+          <span class="priority-action-cta">${rec.actionLabel || 'Open'} →</span>
+        </button>
+      `).join('')}
     </section>
   `;
 }
@@ -435,7 +399,7 @@ function renderView(user, state, returnMsg, weather, recommendations, reminderDe
         ${renderReturnCard(returnMsg)}
         ${renderWeatherBriefingBanner(weatherBriefing)}
         ${renderReminderBanner(reminderDecision)}
-        ${renderPriorityActions(recommendations, state)}
+        ${renderPriorityActions(recommendations)}
         ${renderWeatherCard(weather, hasBriefing)}
         ${renderQuickCheckin(state.wellness.mood || '', state.wellness.energy || '')}
 
@@ -658,7 +622,7 @@ export const TodayView = {
       if (!card) return;
 
       const fresh = document.createElement('div');
-      fresh.innerHTML = renderPriorityActions(getRecommendations(), viewState);
+      fresh.innerHTML = renderPriorityActions(getRecommendations());
       const next = fresh.firstElementChild;
 
       if (next) {
