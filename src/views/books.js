@@ -11,7 +11,6 @@ import { showToast } from '../utils.js';
 import {
   getBooksByStatus,
   getBookSummary,
-  getBookRecommendations,
   applyBookStatusTransition,
 } from '../domain/books.js';
 import {
@@ -22,131 +21,147 @@ import {
 } from '../services/books.js';
 import { fetchBookRecommendations } from '../services/ai.js';
 
-// ─── renderRecommendations ────────────────────────────────────────────────────
-
-function renderRecommendations(books) {
-  const recommendations = getBookRecommendations(books);
-  if (recommendations.length === 0) return '';
-
-  const items = recommendations.map(rec => `
-    <div class="books-recommendation-item">
-      <p class="books-recommendation-title">${rec.title}</p>
-      <p class="books-recommendation-text">${rec.message}</p>
-    </div>
-  `).join('');
-
-  return `
-    <div class="books-recommendations">
-      <p class="books-recommendations-heading">Reading signals</p>
-      <div class="books-recommendation-list">
-        ${items}
-      </div>
-    </div>
-  `;
-}
+// ─── renderAISection ─────────────────────────────────────────────────────────
+// Renders the "Suggested for you" block in all its states.
+// Replaces the old renderRecommendations + renderAIRecommendations pair.
 
 function formatTimeAgo(ts) {
   if (!ts) return '';
-
   const diff = Date.now() - ts;
-
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins} min ago`;
-
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours} hr ago`;
-
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
-function renderAIRecommendations(aiState) {
+function renderAISection(aiState) {
+  // ── Initial prompt — before any request has been made ──────────────────────
+  if (!aiState.hasRequested) {
+    return `
+      <div class="books-recommendations" id="aiSection">
+        <p class="books-recommendations-heading">Suggested for you</p>
+        <div class="books-ai-prompt-row">
+          <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">✨ Suggest a book</button>
+        </div>
+        <div class="books-ai-search-row">
+          <input
+            class="books-ai-search-input"
+            id="bookAISearchInput"
+            type="text"
+            placeholder="Or search for something specific…"
+            autocomplete="off"
+          />
+        </div>
+      </div>
+    `;
+  }
+
+  // ── Loading ────────────────────────────────────────────────────────────────
+  if (aiState.loading) {
+    return `
+      <div class="books-recommendations" id="aiSection">
+        <p class="books-recommendations-heading">Suggested for you</p>
+        <div class="books-recommendation-list">
+          <div class="books-recommendation-item">
+            <p class="books-recommendation-text">Finding something for you…</p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ── Error ──────────────────────────────────────────────────────────────────
   if (aiState.error) {
     return `
-      <div class="books-recommendations">
+      <div class="books-recommendations" id="aiSection">
         <p class="books-recommendations-heading">Suggested for you</p>
         <div class="books-recommendation-list">
           <div class="books-recommendation-item">
             <p class="books-recommendation-text">${aiState.error}</p>
           </div>
         </div>
-        <div class="books-add-row">
-          <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">✨ Try Again</button>
+        <div class="books-ai-prompt-row">
+          <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">✨ Try again</button>
+        </div>
+        <div class="books-ai-search-row">
+          <input
+            class="books-ai-search-input"
+            id="bookAISearchInput"
+            type="text"
+            placeholder="Or search for something specific…"
+            autocomplete="off"
+          />
         </div>
       </div>
     `;
   }
 
-  if (aiState.loading) {
-    return `
-      <div class="books-recommendations">
-        <p class="books-recommendations-heading">Suggested for you</p>
-        <div class="books-recommendation-list">
-          <div class="books-recommendation-item">
-            <p class="books-recommendation-text">Finding recommendations…</p>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  const signals = Array.isArray(aiState?.data?.signals) ? aiState.data.signals : [];
-  const recommendations = Array.isArray(aiState?.data?.recommendations)
-    ? aiState.data.recommendations
-    : [];
-  const meta = aiState?.data?._meta || null;
+  // ── Results ────────────────────────────────────────────────────────────────
+  const signals         = Array.isArray(aiState?.data?.signals)         ? aiState.data.signals         : [];
+  const recommendations = Array.isArray(aiState?.data?.recommendations) ? aiState.data.recommendations : [];
+  const meta            = aiState?.data?._meta || null;
 
   const metaLabel = meta?.createdAt
-    ? (meta.source === 'cache'
-        ? `Updated ${formatTimeAgo(meta.createdAt)}`
-        : 'Just generated')
+    ? (meta.source === 'cache' ? `Updated ${formatTimeAgo(meta.createdAt)}` : 'Just generated')
     : '';
 
-  const metaHtml = metaLabel
-    ? `<p class="books-recommendations-meta">${metaLabel}</p>`
-    : '';
-
+  // No results — most likely not enough history; show search prompt
   if (signals.length === 0 && recommendations.length === 0) {
     return `
-      <div class="books-recommendations">
+      <div class="books-recommendations" id="aiSection">
         <p class="books-recommendations-heading">Suggested for you</p>
-        ${metaHtml}
         <div class="books-recommendation-list">
           <div class="books-recommendation-item">
-            <p class="books-recommendation-text">Not enough reading history yet to suggest something meaningful.</p>
+            <p class="books-recommendation-text">No suggestions yet — try searching for something specific.</p>
           </div>
         </div>
-        <div class="books-add-row">
-          <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">✨ Try Again</button>
+        <div class="books-ai-search-row">
+          <input
+            class="books-ai-search-input"
+            id="bookAISearchInput"
+            type="text"
+            placeholder="Search for something specific…"
+            autocomplete="off"
+          />
+          <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">Search</button>
         </div>
       </div>
     `;
   }
 
-  const signalItems = signals.map(signal => `
-    <div class="books-recommendation-item">
-      <p class="books-recommendation-text">${signal}</p>
-    </div>
-  `).join('');
-
-  const recommendationItems = recommendations.map(rec => `
-    <div class="books-recommendation-item">
-      <p class="books-recommendation-title">${rec.title || ''}${rec.author ? ` — ${rec.author}` : ''}</p>
-      <p class="books-recommendation-text">${rec.reason || ''}</p>
-    </div>
-  `).join('');
+  const resultItems = [
+    ...signals.map(s => `
+      <div class="books-recommendation-item books-recommendation-item--signal">
+        <p class="books-recommendation-text">${s}</p>
+      </div>
+    `),
+    ...recommendations.map(rec => `
+      <div class="books-recommendation-item">
+        <p class="books-recommendation-title">${rec.title || ''}${rec.author ? ` — ${rec.author}` : ''}</p>
+        <p class="books-recommendation-text">${rec.reason || ''}</p>
+      </div>
+    `),
+  ].join('');
 
   return `
-    <div class="books-recommendations">
-      <p class="books-recommendations-heading">Suggested for you</p>
-      ${metaHtml}
+    <div class="books-recommendations" id="aiSection">
+      <p class="books-recommendations-heading">Suggested for you${metaLabel ? ` <span class="books-recommendations-meta">${metaLabel}</span>` : ''}</p>
       <div class="books-recommendation-list">
-        ${signalItems}
-        ${recommendationItems}
+        ${resultItems}
       </div>
-      <div class="books-add-row">
-        <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">✨ Refresh Suggestions</button>
+      <div class="books-ai-prompt-row">
+        <button class="books-add-btn books-add-btn--ai" id="loadBookRecommendationsBtn">✨ Refresh</button>
+      </div>
+      <div class="books-ai-search-row">
+        <input
+          class="books-ai-search-input"
+          id="bookAISearchInput"
+          type="text"
+          placeholder="Or search for something specific…"
+          autocomplete="off"
+        />
       </div>
     </div>
   `;
@@ -284,8 +299,7 @@ function renderView(viewState) {
         </header>
 
         ${renderSummary(summary)}
-        ${renderRecommendations(viewState.books)}
-        ${renderAIRecommendations(viewState.ai)}
+        ${renderAISection(viewState.ai)}
 
         <div class="books-add-row">
           <button class="books-add-btn books-add-btn--outline" id="addBookBtn">
@@ -444,71 +458,6 @@ export const BooksView = {
       });
     }
 
-    function openChoiceSheet(config) {
-      return new Promise(resolve => {
-        const optionsHtml = (config.options || []).map(option => `
-          <button
-            type="button"
-            class="bsheet-choice-btn"
-            data-choice-value="${option.value}"
-          >
-            <span class="bsheet-choice-title">${option.title}</span>
-            ${option.description
-              ? `<span class="bsheet-choice-description">${option.description}</span>`
-              : ''}
-          </button>
-        `).join('');
-
-        const bodyHtml = config.body
-          ? `<p class="bsheet-body">${config.body}</p>`
-          : '';
-
-        const el = document.createElement('div');
-        el.className = 'bsheet-overlay';
-        el.innerHTML = `
-          <div class="bsheet" role="dialog" aria-modal="true">
-            <div class="bsheet-handle"></div>
-            <p class="bsheet-title">${config.title}</p>
-            ${bodyHtml}
-            <div class="bsheet-choice-list">
-              ${optionsHtml}
-            </div>
-            <div class="bsheet-actions">
-              <button class="bsheet-btn bsheet-btn--cancel" id="bsheetChoiceCancel">
-                ${config.cancel || 'Cancel'}
-              </button>
-            </div>
-          </div>
-        `;
-
-        document.body.appendChild(el);
-        requestAnimationFrame(() => el.classList.add('bsheet-overlay--open'));
-
-        function close(result) {
-          el.classList.remove('bsheet-overlay--open');
-          el.addEventListener('transitionend', () => el.remove(), { once: true });
-          resolve(result);
-        }
-
-        el.querySelectorAll('[data-choice-value]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            close(btn.getAttribute('data-choice-value'));
-          });
-        });
-
-        el.querySelector('#bsheetChoiceCancel')?.addEventListener('click', () => close(null));
-
-        el.addEventListener('click', (e) => {
-          if (e.target === el) close(null);
-        });
-
-        requestAnimationFrame(() => {
-          const first = el.querySelector('[data-choice-value]');
-          if (first) first.focus();
-        });
-      });
-    }
-
     // ── Shared helpers ────────────────────────────────────────────────────────
 
     function parseRating(input) {
@@ -536,56 +485,6 @@ export const BooksView = {
         viewState.ai.loading = false;
         render();
       }
-    }
-
-    async function askRecommendationMode() {
-      const result = await openChoiceSheet({
-        title: 'How should I recommend?',
-        body: 'Choose a recommendation style.',
-        options: [
-          {
-            value: 'history',
-            title: 'Based on my reading history',
-            description: 'Uses your finished and stopped books to tailor suggestions.',
-          },
-          {
-            value: 'prompt',
-            title: 'Use a custom prompt',
-            description: 'Ask for something specific, like a mood, genre, or theme.',
-          },
-        ],
-        cancel: 'Cancel',
-      });
-
-      if (!result) return null;
-
-      return { mode: result };
-    }
-
-    async function askRecommendationPrompt() {
-      const result = await openSheet({
-        title: 'What are you in the mood for?',
-        body: 'Your reading history will still be considered.',
-        fields: [
-          {
-            id: 'prompt',
-            label: 'Prompt',
-            type: 'textarea',
-            placeholder: 'e.g. Something thoughtful but easy to read, or a practical psychology book that is less dense.',
-            value: '',
-            rows: 4,
-          },
-        ],
-        confirm: 'Get Suggestions',
-        cancel: 'Cancel',
-      });
-
-      if (!result) return null;
-
-      const prompt = (result.prompt || '').trim();
-      if (!prompt) return null;
-
-      return prompt;
     }
 
     // ── Refresh ──────────────────────────────────────────────────────────────
@@ -765,27 +664,28 @@ export const BooksView = {
         if (btn) btn.disabled = true;
 
         try {
-          const modeChoice = await askRecommendationMode();
-          if (!modeChoice) return;
+          const searchInput = document.getElementById('bookAISearchInput');
+          const userPrompt  = (searchInput?.value || '').trim();
 
-          if (modeChoice.mode === 'prompt') {
-            const userPrompt = await askRecommendationPrompt();
-            if (!userPrompt) return;
-
-            await loadAIRecommendations({
-              mode: 'prompt',
-              userPrompt,
-            });
-            return;
+          if (userPrompt) {
+            await loadAIRecommendations({ mode: 'prompt', userPrompt });
+          } else {
+            await loadAIRecommendations({ mode: 'history' });
           }
-
-          await loadAIRecommendations({
-            mode: 'history',
-          });
         } finally {
           const nextBtn = document.getElementById('loadBookRecommendationsBtn');
           if (nextBtn) nextBtn.disabled = false;
         }
+      });
+
+      // Allow pressing Enter in the search field to trigger suggestions
+      document.getElementById('bookAISearchInput')?.addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        const input = e.currentTarget;
+        const userPrompt = input.value.trim();
+        if (!userPrompt) return;
+        input.blur();
+        await loadAIRecommendations({ mode: 'prompt', userPrompt });
       });
 
       document.getElementById('addBookBtn')?.addEventListener('click', async () => {

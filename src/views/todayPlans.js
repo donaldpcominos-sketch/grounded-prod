@@ -18,6 +18,10 @@ import {
   fetchNearbyCandidates,
   radiusToMetres,
 } from '../services/places.js';
+import {
+  saveTodayPlan,
+  loadTodayPlan,
+} from '../services/todayPlans.js';
 
 // ─── Module-level session state ───────────────────────────────────────────────
 // Persists across navigations within a session so returning to the view
@@ -252,18 +256,6 @@ function stepPriority() {
   });
 }
 
-function stepFoodIntent() {
-  return openChoiceSheet({
-    title: 'How important is food?',
-    options: [
-      { value: 'required', title: 'Need to eat',      description: 'A food stop is part of the plan.' },
-      { value: 'nice',     title: 'Would be nice',    description: 'Happy either way.' },
-      { value: 'none',     title: 'Not fussed',       description: 'Food isn\'t part of this.' },
-    ],
-    cancel: 'Back',
-  });
-}
-
 function stepTravelTolerance() {
   return openChoiceSheet({
     title: 'How far are you happy to go?',
@@ -278,23 +270,11 @@ function stepTravelTolerance() {
 
 // ─── Prompt flow ──────────────────────────────────────────────────────────────
 //
-// Drives each step in order, branching conditionally based on prior answers.
-// null return from any step means "Back" — go back one step.
-// null on the first step means "Cancel" — exit the flow.
-//
-// Returns a flat answers object, or null if the user cancelled.
+// 4 steps max (3 when "Just me" is selected — no baby state step).
+// null from any step means Back; null on step 0 exits entirely.
+// foodIntent is derived from priority ('food' → 'required', else 'nice').
 
-async function collectAnswers() {
-  const answers = {};
-
-  // ── Step 0: outing type (encodes withNico + outingFocus) ─────────────────
-  let outingType = null;
-  while (!outingType) {
-    outingType = await stepOuting();
-    if (outingType === null) return null; // Cancel on first step exits entirely
-  }
-
-  // Decode the composite value into two fields
+function decodeOutingType(outingType, answers) {
   if (outingType === 'me') {
     answers.withNico    = false;
     answers.outingFocus = 'me';
@@ -302,105 +282,72 @@ async function collectAnswers() {
     answers.withNico    = true;
     answers.outingFocus = 'nico';
   } else {
-    // nico-both
     answers.withNico    = true;
     answers.outingFocus = 'both';
   }
+}
+
+async function collectAnswers() {
+  const answers = {};
+
+  // ── Step 0: outing type ───────────────────────────────────────────────────
+  let outingType = await stepOuting();
+  if (outingType === null) return null;
+  decodeOutingType(outingType, answers);
 
   // ── Step 1: baby state — only when Nico is coming ────────────────────────
   if (answers.withNico) {
-    let babyState = null;
-    while (!babyState) {
+    let babyState = await stepBabyState();
+    while (babyState === null) {
+      // Back → re-run step 0
+      outingType = await stepOuting();
+      if (outingType === null) return null;
+      decodeOutingType(outingType, answers);
+      if (!answers.withNico) break; // switched to "just me" — skip baby state
       babyState = await stepBabyState();
-      if (babyState === null) {
-        // Back — re-run step 0
-        outingType = null;
-        while (!outingType) {
-          outingType = await stepOuting();
-          if (outingType === null) return null;
-        }
-        if (outingType === 'me') { answers.withNico = false; answers.outingFocus = 'me'; }
-        else if (outingType === 'nico-easy') { answers.withNico = true; answers.outingFocus = 'nico'; }
-        else { answers.withNico = true; answers.outingFocus = 'both'; }
-
-        if (!answers.withNico) {
-          // Switched to 'me' — skip baby state entirely
-          delete answers.babyState;
-          break;
-        }
-      } else {
-        answers.babyState = babyState;
-      }
     }
+    if (babyState !== null) answers.babyState = babyState;
   }
 
   // ── Step 2: parent energy ─────────────────────────────────────────────────
-  let parentEnergy = null;
-  while (!parentEnergy) {
-    parentEnergy = await stepParentEnergy();
-    if (parentEnergy === null) {
-      // Back — re-run previous step (baby state if withNico, else step 0)
-      if (answers.withNico) {
-        let babyState = await stepBabyState();
-        if (babyState !== null) answers.babyState = babyState;
-      }
-      // Stay in this loop to re-ask parentEnergy regardless
+  let parentEnergy = await stepParentEnergy();
+  while (parentEnergy === null) {
+    // Back → re-run baby state (or outing if no Nico)
+    if (answers.withNico) {
+      const bs = await stepBabyState();
+      if (bs !== null) answers.babyState = bs;
     } else {
-      answers.parentEnergy = parentEnergy;
+      outingType = await stepOuting();
+      if (outingType === null) return null;
+      decodeOutingType(outingType, answers);
     }
+    parentEnergy = await stepParentEnergy();
   }
+  answers.parentEnergy = parentEnergy;
 
   // ── Step 3: priority ──────────────────────────────────────────────────────
-  let priority = null;
-  while (!priority) {
+  let priority = await stepPriority();
+  while (priority === null) {
+    // Back → re-ask parent energy
+    const pe = await stepParentEnergy();
+    if (pe !== null) answers.parentEnergy = pe;
     priority = await stepPriority();
-    if (priority === null) {
-      // Back — re-ask parent energy
-      const pe = await stepParentEnergy();
-      if (pe !== null) answers.parentEnergy = pe;
-    } else {
-      answers.priority = priority;
-    }
   }
+  answers.priority  = priority;
+  answers.foodIntent = priority === 'food' ? 'required' : 'nice';
 
-  // ── Step 4: food intent ───────────────────────────────────────────────────
-  // If priority is 'food', food intent is implied as 'required' — skip the step.
-  if (answers.priority === 'food') {
-    answers.foodIntent = 'required';
-  } else {
-    let foodIntent = null;
-    while (!foodIntent) {
-      foodIntent = await stepFoodIntent();
-      if (foodIntent === null) {
-        // Back — re-ask priority
-        const p = await stepPriority();
-        if (p !== null) answers.priority = p;
-        // If they switched to food priority, we can break out
-        if (answers.priority === 'food') {
-          answers.foodIntent = 'required';
-          break;
-        }
-      } else {
-        answers.foodIntent = foodIntent;
-      }
+  // ── Step 4: travel tolerance ──────────────────────────────────────────────
+  let travelTolerance = await stepTravelTolerance();
+  while (travelTolerance === null) {
+    // Back → re-ask priority
+    const p = await stepPriority();
+    if (p !== null) {
+      answers.priority   = p;
+      answers.foodIntent = p === 'food' ? 'required' : 'nice';
     }
-  }
-
-  // ── Step 5: travel tolerance ──────────────────────────────────────────────
-  let travelTolerance = null;
-  while (!travelTolerance) {
     travelTolerance = await stepTravelTolerance();
-    if (travelTolerance === null) {
-      // Back — re-ask food intent (unless implied)
-      if (answers.priority !== 'food') {
-        const fi = await stepFoodIntent();
-        if (fi !== null) answers.foodIntent = fi;
-      }
-      // Stay in loop to re-ask travelTolerance
-    } else {
-      answers.travelTolerance = travelTolerance;
-    }
   }
+  answers.travelTolerance = travelTolerance;
 
   return answers;
 }
@@ -565,7 +512,7 @@ function renderView(phase, recommendations, context) {
         <header class="page-header">
           <p class="eyebrow">Grounded</p>
           <h1 class="page-title">Today's plan</h1>
-          <p class="page-subtitle">Where to take Nico right now.</p>
+          <p class="page-subtitle">Find somewhere good to go today.</p>
         </header>
         <section class="${wrapperClass}" id="todayPlanCard">
           ${content}
@@ -594,7 +541,7 @@ function setCardContent(container, html, isResults = false) {
 
 // ─── Flow ─────────────────────────────────────────────────────────────────────
 
-async function runFlow(container, profile, weatherData) {
+async function runFlow(container, userId, profile, weatherData) {
   const answers = await collectAnswers();
   if (!answers) return; // user cancelled from step 0
 
@@ -639,33 +586,38 @@ async function runFlow(container, profile, weatherData) {
   _lastResults = recommendations;
   _lastContext  = context;
 
+  // Persist to Firestore so results survive app close — fire-and-forget
+  if (userId) {
+    saveTodayPlan(userId, context, recommendations).catch(() => {});
+  }
+
   setCardContent(container, renderResults(recommendations, context), true);
-  bindRetry(container, profile, weatherData);
+  bindRetry(container, userId, profile, weatherData);
 }
 
 // ─── Event binding ────────────────────────────────────────────────────────────
 
-function bindRetry(container, profile, weatherData) {
+function bindRetry(container, userId, profile, weatherData) {
   container.querySelector('#todayPlanRetryBtn')?.addEventListener('click', () => {
     _lastResults = null;
     _lastContext  = null;
     setCardContent(container, renderPrompt(), false);
-    bindStart(container, profile, weatherData);
+    bindStart(container, userId, profile, weatherData);
   });
 }
 
-function bindStart(container, profile, weatherData) {
+function bindStart(container, userId, profile, weatherData) {
   container.querySelector('#todayPlanStartBtn')?.addEventListener('click', async () => {
     const btn = container.querySelector('#todayPlanStartBtn');
     if (btn) btn.disabled = true;
     try {
-      await runFlow(container, profile, weatherData);
+      await runFlow(container, userId, profile, weatherData);
     } catch {
       setCardContent(container, `
         <p class="card-body">Something went wrong — please try again.</p>
         <button class="btn-secondary w-full mt-3" id="todayPlanRetryBtn">Try again</button>
       `, false);
-      bindRetry(container, profile, weatherData);
+      bindRetry(container, userId, profile, weatherData);
     }
   });
 }
@@ -695,14 +647,28 @@ export const TodayPlansView = {
       // Degrade gracefully — profile and weather are optional
     }
 
-    // If session results exist, show them immediately without re-running the flow
+    // Restore in-memory session results first (fastest path)
     if (_lastResults && _lastContext) {
       container.innerHTML = renderView('results', _lastResults, _lastContext);
-      bindRetry(container, profile, weatherData);
+      bindRetry(container, user.uid, profile, weatherData);
       return;
     }
 
+    // Try to load today's saved plan from Firestore
+    try {
+      const saved = await loadTodayPlan(user.uid);
+      if (saved?.recommendations?.length) {
+        _lastResults = saved.recommendations;
+        _lastContext  = saved.context;
+        container.innerHTML = renderView('results', _lastResults, _lastContext);
+        bindRetry(container, user.uid, profile, weatherData);
+        return;
+      }
+    } catch {
+      // Firestore unavailable — fall through to idle prompt
+    }
+
     container.innerHTML = renderView('idle', null, null);
-    bindStart(container, profile, weatherData);
+    bindStart(container, user.uid, profile, weatherData);
   },
 };
