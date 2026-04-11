@@ -6,6 +6,7 @@ import { WEEKLY_SPLIT } from '../data/workouts.js';
 import { HABITS } from '../services/habits.js';
 import { navigateTo } from '../router.js';
 import { getDailyState } from '../domain/dailyState.js';
+import { Skeletons } from '../skeletons.js';
 import { getTodayRecommendations } from '../domain/recommendations.js';
 import { getTodaySummary } from '../domain/summary.js';
 import { getDayContext } from '../domain/dayContext.js';
@@ -22,6 +23,45 @@ import {
   recordDailyReminderSent,
   recordWeatherBriefingSent,
 } from '../services/notifications.js';
+
+// ─── Greeting ─────────────────────────────────────────────────────────────────
+
+function getGreeting(firstName) {
+  const h = new Date().getHours();
+  if (h < 12) return `Good morning, ${firstName}.`;
+  if (h < 17) return `Good afternoon, ${firstName}.`;
+  return `Good evening, ${firstName}.`;
+}
+
+// ─── Hero ring ────────────────────────────────────────────────────────────────
+
+const RING_CIRCUMFERENCE = 263.89; // 2π × r42
+
+function renderHeroRing(habitsState, workoutStreak) {
+  const done  = habitsState?.completedCount ?? 0;
+  const total = habitsState?.totalCount ?? 0;
+  const allDone = total > 0 && done >= total;
+
+  const ringFillClass = allDone ? 'today-ring-fill today-ring-fill--gold' : 'today-ring-fill';
+
+  const innerContent = total > 0
+    ? `
+      <p class="today-ring-count">${done}<span style="font-size:14px;color:var(--color-ink-4)">/${total}</span></p>
+      <p class="today-ring-label">habits</p>
+      ${workoutStreak > 0 ? `<p class="today-ring-streak">🔥 ${workoutStreak}</p>` : ''}
+    `
+    : `<p class="today-ring-label" style="font-size:12px;color:var(--color-ink-3);text-align:center;padding:0 8px">Set up habits →</p>`;
+
+  return `
+    <div class="today-ring-wrap" id="todayRingWrap">
+      <svg class="today-ring" viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="${ringFillClass === 'today-ring-fill today-ring-fill--gold' ? 'today-ring-bg' : 'today-ring-bg'}" cx="50" cy="50" r="42"/>
+        <circle class="${ringFillClass}" id="todayRingFill" cx="50" cy="50" r="42"/>
+      </svg>
+      <div class="today-ring-inner">${innerContent}</div>
+    </div>
+  `;
+}
 
 // ─── Weather card ─────────────────────────────────────────────────────────────
 
@@ -208,9 +248,11 @@ function renderQuickCheckin(mood, energy) {
     `;
   }
 
+  const energyHidden = !mood;
+
   return `
     <div class="qci-card" id="quickCheckin">
-      <p class="qci-heading">How are you today?</p>
+      <p class="qci-heading">How are you feeling?</p>
       <div class="qci-group">
         ${MOOD_OPTIONS.map(o => `
           <button type="button"
@@ -223,8 +265,8 @@ function renderQuickCheckin(mood, energy) {
           </button>
         `).join('')}
       </div>
-      <div class="qci-divider"></div>
-      <div class="qci-group qci-group--energy">
+      <div class="qci-divider${energyHidden ? ' qci-divider--hidden' : ''}"></div>
+      <div class="qci-group qci-group--energy${energyHidden ? ' qci-group--energy--hidden' : ''}">
         ${ENERGY_OPTIONS.map(o => `
           <button type="button"
             class="qci-btn${energy === o.value ? ' qci-btn--selected' : ''}"
@@ -376,20 +418,20 @@ function renderReturnCard(returnMsg) {
 
 function renderView(user, state, returnMsg, weather, recommendations, reminderDecision, weatherBriefing, hasBriefing) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
+  const workoutStreak = state.workout?.streak ?? 0;
 
   return `
     <main class="view-scroll">
       <div class="view-inner">
 
-<header class="page-header">
-  <p class="eyebrow">Grounded</p>
-  <div class="header-row">
-    <div>
-      <h1 class="page-title">Welcome, ${firstName}</h1>
-      <p class="page-subtitle">${getTodayDisplay()}</p>
-    </div>
+<header class="today-hero">
+  <div class="today-hero-toprow">
+    <p class="today-hero-eyebrow">Grounded</p>
     ${user.photoURL ? `<img src="${user.photoURL}" alt="${user.displayName || 'Profile'}" class="avatar" />` : ''}
   </div>
+  ${renderHeroRing(state.habits, workoutStreak)}
+  <h1 class="today-greeting">${getGreeting(firstName)}</h1>
+  <p class="today-hero-date">${getTodayDisplay()}</p>
 </header>
 
 <p class="today-summary" id="todaySummary">
@@ -419,7 +461,7 @@ function renderView(user, state, returnMsg, weather, recommendations, reminderDe
 
 export const TodayView = {
   async init(container, user) {
-    container.innerHTML = '<div class="loading-state"><p>Loading your dashboard…</p></div>';
+    container.innerHTML = Skeletons.today();
 
     const [state, weather, notifData] = await Promise.all([
       getDailyState(user.uid),
@@ -497,6 +539,20 @@ export const TodayView = {
       autoShowBriefing,
       !!_sessionWeatherBriefing,
     );
+
+    // ── Ring animation ───────────────────────────────────────────────────────
+    // Double rAF ensures the element is painted at stroke-dashoffset:263.89
+    // before we transition it to the target value.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const ring = document.getElementById('todayRingFill');
+        if (!ring) return;
+        const total = viewState.habits?.totalCount ?? 0;
+        const done  = viewState.habits?.completedCount ?? 0;
+        const pct   = total > 0 ? done / total : 0;
+        ring.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - pct);
+      });
+    });
 
     // Record the reminder as sent immediately after rendering.
     if (reminderDecision?.shouldSendReminder) {
@@ -669,6 +725,15 @@ export const TodayView = {
         tile.replaceWith(next);
         bindStaticTiles();
       }
+
+      // Sync ring to updated habits state
+      const ring = document.getElementById('todayRingFill');
+      if (ring) {
+        const total = viewState.habits?.totalCount ?? 0;
+        const done  = viewState.habits?.completedCount ?? 0;
+        const pct   = total > 0 ? done / total : 0;
+        ring.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - pct);
+      }
     }
 
     function rebuildSummary() {
@@ -738,6 +803,12 @@ export const TodayView = {
             b.classList.toggle('qci-btn--selected', b.dataset.value === val);
             b.setAttribute('aria-pressed', String(b.dataset.value === val));
           });
+
+          // Reveal energy group the first time mood is selected
+          if (group === 'mood') {
+            document.querySelector('.qci-group--energy')?.classList.remove('qci-group--energy--hidden');
+            document.querySelector('.qci-divider')?.classList.remove('qci-divider--hidden');
+          }
 
           try {
             await saveTodayWellnessCheckin(user.uid, wellnessState);

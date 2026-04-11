@@ -1,6 +1,7 @@
 import { HABITS, getHabits, getAllHabits, getHabitLog, getHabitLogsRange, toggleHabit, computeStreaks, buildCalendarDays, getNWeeksAgoKey, createHabit, updateHabitActive, updateHabit, updateHabitOrder } from '../services/habits.js';
 import { getTodayKey, showToast } from '../utils.js';
 import { navigateTo } from '../router.js';
+import { Skeletons } from '../skeletons.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -363,6 +364,15 @@ function patchPill(habitId, done) {
   btn.setAttribute('aria-pressed', String(done));
   const check = btn.querySelector('.habit-pill-check');
   if (check) check.textContent = done ? '✓' : '';
+
+  // Bounce animation when marking done
+  if (done) {
+    btn.classList.remove('habit-pill--popping');
+    // Force reflow so animation replays even if triggered twice quickly
+    void btn.offsetWidth;
+    btn.classList.add('habit-pill--popping');
+    setTimeout(() => btn.classList.remove('habit-pill--popping'), 400);
+  }
 }
 
 function patchCalDot(dateKey, logsMap, habitDefs) {
@@ -441,7 +451,7 @@ function bindStreaksToggle() {
 
 export const HabitsView = {
   async init(container, user) {
-    container.innerHTML = '<div class="loading-state"><p>Loading habits…</p></div>';
+    container.innerHTML = Skeletons.habits();
 
     const todayKey = getTodayKey();
     const startKey = getNWeeksAgoKey(4);
@@ -843,6 +853,20 @@ export const HabitsView = {
 
           patchPill(habitId, newVal);
           patchCalDot(activeDate, currentLogs, habitDefs);
+
+          // All-done celebration when every habit is ticked for today
+          if (newVal && activeDate === todayKey) {
+            const doneCount = habitDefs.filter(h => isHabitDone(currentLogs[todayKey] || {}, h.id)).length;
+            if (doneCount === habitDefs.length && habitDefs.length > 0) {
+              const section = document.getElementById('habitsPillsSection');
+              if (section) {
+                section.classList.remove('habits-pills-section--celebrating');
+                void section.offsetWidth;
+                section.classList.add('habits-pills-section--celebrating');
+                setTimeout(() => section.classList.remove('habits-pills-section--celebrating'), 800);
+              }
+            }
+          }
 
           const rankChanged = getSortedByStreak(currentStreaks, habitDefs).map(h => h.id).join()
             !== getSortedByStreak(prevStreaks, habitDefs).map(h => h.id).join();
