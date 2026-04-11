@@ -65,6 +65,18 @@ function renderHeroRing(habitsState, workoutStreak) {
 
 // ─── Weather card ─────────────────────────────────────────────────────────────
 
+function weatherConditionClass(desc, emoji) {
+  const d = (desc || '').toLowerCase();
+  const e = emoji || '';
+  if (d.includes('thunder') || d.includes('storm') || e === '⛈️') return 'weather-card--storm';
+  if (d.includes('snow') || d.includes('sleet') || e === '❄️' || e === '🌨️') return 'weather-card--snow';
+  if (d.includes('rain') || d.includes('drizzle') || d.includes('shower') || e === '🌧️' || e === '🌦️') return 'weather-card--rain';
+  if (d.includes('partly') || d.includes('mostly') || e === '⛅' || e === '🌤️') return 'weather-card--partly-cloudy';
+  if (d.includes('cloud') || d.includes('overcast') || d.includes('fog') || d.includes('mist')) return 'weather-card--cloudy';
+  if (d.includes('sun') || d.includes('clear') || e === '☀️') return 'weather-card--sunny';
+  return '';
+}
+
 function uvBadgeClass(uv) {
   if (uv >= 8) return 'weather-uv-badge weather-uv-badge--extreme';
   if (uv >= 4) return 'weather-uv-badge weather-uv-badge--high';
@@ -87,6 +99,7 @@ function renderWeatherCard(weather, hasBriefing) {
   }
 
   const { currentTemp, currentEmoji, currentDesc, currentUv, forecast, walkWindow, fromCache, cacheAgeMs } = weather;
+  const condClass = weatherConditionClass(currentDesc, currentEmoji);
 
   const staleNote = fromCache
     ? `<p class="weather-stale-note">Offline — last updated ${Math.round(cacheAgeMs / 60000)} min ago</p>`
@@ -107,7 +120,7 @@ function renderWeatherCard(weather, hasBriefing) {
     : '';
 
   return `
-    <div class="weather-card" id="weatherCard">
+    <div class="weather-card ${condClass}" id="weatherCard">
       <div class="weather-main">
         <div class="weather-current">
           <span class="weather-emoji">${currentEmoji}</span>
@@ -239,6 +252,7 @@ function renderQuickCheckin(mood, energy) {
       <div class="qci-card qci-card--summary" id="quickCheckin">
         <div class="qci-summary-row">
           <div class="qci-summary-pair">
+            <span class="qci-mood-dot qci-mood-dot--${mood}" aria-hidden="true"></span>
             <span class="qci-summary-chip">${m?.emoji || ''} ${m?.label || mood}</span>
             <span class="qci-summary-chip">${e?.emoji || ''} ${e?.label || energy}</span>
           </div>
@@ -540,6 +554,13 @@ export const TodayView = {
       !!_sessionWeatherBriefing,
     );
 
+    // ── Mood ambient tint — restore from saved state on every load ───────────
+    if (viewState.wellness?.mood) {
+      document.body.dataset.mood = viewState.wellness.mood;
+    } else {
+      delete document.body.dataset.mood;
+    }
+
     // ── Ring animation ───────────────────────────────────────────────────────
     // Double rAF ensures the element is painted at stroke-dashoffset:263.89
     // before we transition it to the target value.
@@ -783,11 +804,16 @@ export const TodayView = {
       if (habits)          rebuildHabitsTile();
     }
 
-    function showQciTick() {
+    function collapseAndResolveQci() {
       const qci = document.getElementById('quickCheckin');
       if (!qci) return;
-      qci.classList.add('qci-card--saved');
-      setTimeout(() => qci.classList.remove('qci-card--saved'), 900);
+      qci.classList.add('qci-card--collapsing');
+      setTimeout(() => {
+        refreshTodayUI();
+        // Animate the resolved summary card in
+        const resolved = document.getElementById('quickCheckin');
+        if (resolved) resolved.style.animation = 'qci-resolve 0.28s ease both';
+      }, 340);
     }
 
     function bindQci() {
@@ -819,8 +845,10 @@ export const TodayView = {
               const mergedState = { ...viewState, wellness: { ...wellnessState } };
               hideReminderBannerIfDone(mergedState);
 
-              showQciTick();
-              setTimeout(() => refreshTodayUI(), 700);
+              // Apply ambient mood tint to the page background
+              document.body.dataset.mood = wellnessState.mood;
+
+              collapseAndResolveQci();
             }
           } catch {
             showToast('Save failed — try again', 'error');
@@ -836,6 +864,9 @@ export const TodayView = {
         wellnessState.energy    = '';
         viewState.wellness.mood   = '';
         viewState.wellness.energy = '';
+
+        // Lift mood tint while editing
+        delete document.body.dataset.mood;
 
         const fresh = document.createElement('div');
         fresh.innerHTML = renderQuickCheckin('', '');

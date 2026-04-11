@@ -79,13 +79,13 @@ function renderHabitPills(habits, activeDate, isToday, habitDefs) {
         ${!isToday ? '<p class="habits-pills-hint">Logging a past day</p>' : ''}
       </div>
       <div class="habits-pills-list">
-        ${habitDefs.map(h => {
+        ${habitDefs.map((h, i) => {
           const done = isHabitDone(habits, h.id);
           return `
             <button
               class="habit-pill${done ? ' habit-pill--done' : ''}"
               data-habit-id="${h.id}"
-              style="--habit-color: ${h.color}"
+              style="--habit-color: ${h.color}; animation-delay: ${i * 55}ms"
               aria-pressed="${done}"
               aria-label="${h.label}"
             >

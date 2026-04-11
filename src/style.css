@@ -77,12 +77,31 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes slide-from-right {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slide-from-left {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
 .view-scroll {
   height: calc(100dvh - var(--nav-height));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
   animation: view-enter 0.24s ease both;
+}
+
+/* Directional overrides — set by router via data-slide-dir on the container */
+[data-slide-dir="right"] .view-scroll {
+  animation: slide-from-right 0.27s ease both;
+}
+
+[data-slide-dir="left"] .view-scroll {
+  animation: slide-from-left 0.27s ease both;
 }
 
 .view-inner {
@@ -2571,6 +2590,46 @@ body {
 
 .qci-edit-btn:hover { color: var(--color-ink-2); }
 
+/* QCI collapse → resolve animation */
+@keyframes qci-collapse {
+  0%   { opacity: 1; transform: scale(1);    }
+  45%  { opacity: 0; transform: scale(0.97); }
+  100% { opacity: 0; transform: scale(0.97); }
+}
+
+@keyframes qci-resolve {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+.qci-card--collapsing {
+  animation: qci-collapse 0.32s ease forwards;
+  pointer-events: none;
+}
+
+/* Mood dot in summary state */
+.qci-mood-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.qci-mood-dot--calm      { background: #4a7c59; }
+.qci-mood-dot--good      { background: #b5860d; }
+.qci-mood-dot--flat      { background: #78716c; }
+.qci-mood-dot--stretched { background: #2c6e8a; }
+
+/* ─── Mood-reactive ambient background ──────────────────────────────────────── */
+
+body {
+  transition: background-color 2s ease;
+}
+
+body[data-mood="calm"]      { background: #f2f5f2; }
+body[data-mood="good"]      { background: #f6f2eb; }
+body[data-mood="flat"]      { background: #f2f2f4; }
+body[data-mood="stretched"] { background: #f0f2f5; }
+
 /* Energy group hidden / reveal */
 .qci-group--energy {
   overflow: hidden;
@@ -3370,11 +3429,53 @@ body {
 /* ─── Weather card ───────────────────────────────────────────────────────────── */
 
 .weather-card {
+  position: relative;
+  overflow: hidden;
   background: var(--color-surface);
   border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-card);
   padding: 20px;
   margin-bottom: 12px;
+}
+
+/* Ambient gradient wash — sits behind all card content */
+.weather-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0.22;
+  pointer-events: none;
+}
+
+.weather-card--sunny::before {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+}
+
+.weather-card--partly-cloudy::before {
+  background: linear-gradient(135deg, #fde68a 0%, #94a3b8 100%);
+}
+
+.weather-card--cloudy::before {
+  background: linear-gradient(135deg, #cbd5e1 0%, #94a3b8 100%);
+}
+
+.weather-card--rain::before {
+  background: linear-gradient(135deg, #93c5fd 0%, #6b7280 100%);
+}
+
+.weather-card--storm::before {
+  background: linear-gradient(135deg, #6b7280 0%, #374151 100%);
+}
+
+.weather-card--snow::before {
+  background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+}
+
+/* All card content sits above the gradient */
+.weather-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .weather-main {
@@ -3387,11 +3488,11 @@ body {
 .weather-current {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .weather-emoji {
-  font-size: 36px;
+  font-size: 48px;
   line-height: 1;
 }
 
@@ -3399,7 +3500,7 @@ body {
 
 .weather-temp {
   font-family: var(--font-display);
-  font-size: 32px;
+  font-size: 44px;
   font-weight: 500;
   color: var(--color-ink);
   line-height: 1;
@@ -3408,7 +3509,7 @@ body {
 .weather-desc {
   font-size: 13px;
   color: var(--color-ink-3);
-  margin-top: 2px;
+  margin-top: 4px;
   letter-spacing: 0.02em;
 }
 
@@ -4019,6 +4120,11 @@ body {
   gap: 7px;
 }
 
+@keyframes habit-pill-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .habit-pill {
   display: flex;
   align-items: center;
@@ -4033,6 +4139,7 @@ body {
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
   text-align: left;
   -webkit-tap-highlight-color: transparent;
+  animation: habit-pill-enter 0.3s ease both;
 }
 
 .habit-pill:active { transform: scale(0.98); }
