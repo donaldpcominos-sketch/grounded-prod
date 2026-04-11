@@ -18,19 +18,18 @@ const NAV_ITEMS = [
     </svg>`
   },
   {
-    name: 'workouts',
-    label: 'Workouts',
+    name: 'habits',
+    label: 'Habits',
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M6 4v16M18 4v16M3 8h3M18 8h3M3 16h3M18 16h3"/>
+      <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z"/>
+      <path d="M8 12l3 3 5-5"/>
     </svg>`
   },
   {
-    name: 'shopping',
-    label: 'Shopping',
+    name: 'workouts',
+    label: 'Move',
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
-      <line x1="3" y1="6" x2="21" y2="6"/>
-      <path d="M16 10a4 4 0 0 1-8 0"/>
+      <path d="M6 4v16M18 4v16M3 8h3M18 8h3M3 16h3M18 16h3"/>
     </svg>`
   },
   {
@@ -41,27 +40,9 @@ const NAV_ITEMS = [
       <path d="M9 17v1a3 3 0 0 0 6 0v-1"/>
     </svg>`
   },
-
-  {
-  name: 'books',
-  label: 'Books',
-  icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-  </svg>`
-},
-
-{
-  name: 'today-plans',
-  label: 'Plan',
-  icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="12" cy="12" r="10"/>
-    <polyline points="12 6 12 12 16 14"/>
-  </svg>`
-},
   {
     name: 'profile',
-    label: 'Profile',
+    label: 'More',
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
       <circle cx="12" cy="7" r="4"/>
@@ -82,7 +63,9 @@ export function renderShell(user) {
             data-nav="${item.name}"
             aria-label="${item.label}"
           >
-            <span class="nav-icon">${item.icon}</span>
+            <span class="nav-icon-wrap">
+              <span class="nav-icon">${item.icon}</span>
+            </span>
             <span class="nav-label">${item.label}</span>
           </button>
         `).join('')}

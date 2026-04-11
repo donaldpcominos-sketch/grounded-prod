@@ -1,6 +1,7 @@
 // src/views/profile.js
 
 import { signOutUser } from '../services/auth.js';
+import { navigateTo } from '../router.js';
 import { getBannedExercises, getRecentWorkoutSessions, getWorkoutStreak } from '../services/workouts.js';
 import { db } from '../lib/firebase.js';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
@@ -360,6 +361,53 @@ function render() {
           </section>
         ` : ''}
 
+        <!-- More links -->
+        <section class="card mt-3">
+          <p class="card-label">More</p>
+          <div class="more-links mt-2">
+            <button class="more-link" id="navToShopping">
+              <span class="more-link-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                  <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+                  <line x1="3" y1="6" x2="21" y2="6"/>
+                  <path d="M16 10a4 4 0 0 1-8 0"/>
+                </svg>
+              </span>
+              <span class="more-link-body">
+                <span class="more-link-title">Shopping list</span>
+                <span class="more-link-desc">Shared grocery list</span>
+              </span>
+              <span class="more-link-chevron">&#8250;</span>
+            </button>
+            <button class="more-link" id="navToBooks">
+              <span class="more-link-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                </svg>
+              </span>
+              <span class="more-link-body">
+                <span class="more-link-title">Reading list</span>
+                <span class="more-link-desc">Books you&rsquo;re reading &amp; want to read</span>
+              </span>
+              <span class="more-link-chevron">&#8250;</span>
+            </button>
+            <button class="more-link" id="navToPlans">
+              <span class="more-link-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+              </span>
+              <span class="more-link-body">
+                <span class="more-link-title">Places nearby</span>
+                <span class="more-link-desc">Where to go today</span>
+              </span>
+              <span class="more-link-chevron">&#8250;</span>
+            </button>
+          </div>
+        </section>
+
         <!-- App info -->
         <section class="card mt-3">
           <p class="card-label">About</p>
@@ -395,6 +443,11 @@ function bindEvents() {
   document.getElementById('signOutBtn')?.addEventListener('click', async () => {
     await signOutUser();
   });
+
+  // ── More links ──
+  document.getElementById('navToShopping')?.addEventListener('click', () => navigateTo('shopping'));
+  document.getElementById('navToBooks')?.addEventListener('click',    () => navigateTo('books'));
+  document.getElementById('navToPlans')?.addEventListener('click',    () => navigateTo('today-plans'));
 
   // ── Unban exercises ──
   document.querySelectorAll('[data-unban-id]').forEach(btn => {
