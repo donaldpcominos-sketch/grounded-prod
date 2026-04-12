@@ -123,7 +123,7 @@ function renderWeatherStrip(weather, hasBriefing) {
           <button class="weather-strip-toggle" id="weatherForecastToggle" aria-expanded="false" aria-label="Show forecast">↓</button>
         </div>
       </div>
-      <div id="weatherForecast" hidden>
+      <div id="weatherForecast">
         <div class="weather-strip-expanded">
           ${walkWindow ? `<p class="weather-strip-walk">${walkWindow}</p>` : ''}
           <div class="weather-forecast">${forecastHtml}</div>
@@ -436,14 +436,23 @@ function renderCanvasHabits(habitsState) {
   const items = habitsState?.items ?? [];
   if (!items.length) return '';
 
+  const done  = items.filter(h => h.completed).length;
+  const total = items.length;
+  const allDone = done === total && total > 0;
+  const progressText = allDone ? `All ${total} done ✓` : `${done} of ${total}`;
+
   return `
     <section class="canvas-habits" id="canvasHabits">
-      <p class="canvas-section-label">Today's habits</p>
+      <div class="canvas-habits-header">
+        <p class="canvas-section-label">Habits</p>
+        <p class="canvas-habits-progress${allDone ? ' canvas-habits-progress--done' : ''}">${progressText}</p>
+      </div>
       <div class="canvas-habit-pills">
-        ${items.map(h => `
+        ${items.map((h, i) => `
           <button
             class="canvas-habit-pill${h.completed ? ' canvas-habit-pill--done' : ''}"
             data-habit-id="${h.id}"
+            style="--habit-color: ${h.color || 'var(--color-ink)'}; animation-delay: ${i * 45}ms"
             aria-label="${h.label}${h.completed ? ' — done' : ''}"
             aria-pressed="${h.completed}"
           >
@@ -698,6 +707,17 @@ export const TodayView = {
       ring.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - (total > 0 ? done / total : 0));
     }
 
+    function syncCanvasProgress() {
+      const progressEl = document.querySelector('.canvas-habits-progress');
+      if (!progressEl) return;
+      const items  = viewState.habits?.items ?? [];
+      const done   = items.filter(h => h.completed).length;
+      const total  = items.length;
+      const allDone = done === total && total > 0;
+      progressEl.textContent = allDone ? `All ${total} done ✓` : `${done} of ${total}`;
+      progressEl.classList.toggle('canvas-habits-progress--done', allDone);
+    }
+
     function rebuildCanvasHabits() {
       const section = document.getElementById('canvasHabits');
       if (!section) return;
@@ -727,6 +747,7 @@ export const TodayView = {
           habit.completed = newValue;
           viewState.habits.completedCount = viewState.habits.items.filter(h => h.completed).length;
           syncRing();
+          syncCanvasProgress();
           rebuildSummary();
           rebuildPriorityActions();
 
@@ -741,6 +762,7 @@ export const TodayView = {
             btn.setAttribute('aria-pressed', String(wasDone));
             btn.setAttribute('aria-label', `${habit.label}${wasDone ? ' — done' : ''}`);
             syncRing();
+            syncCanvasProgress();
           }
         });
       });
@@ -1029,10 +1051,10 @@ export const TodayView = {
       const forecast = document.getElementById('weatherForecast');
       const toggle   = document.getElementById('weatherForecastToggle');
       if (!forecast || !toggle) return;
-      const nowHidden = !forecast.hidden;
-      forecast.hidden = nowHidden;
-      toggle.setAttribute('aria-expanded', String(!nowHidden));
-      toggle.classList.toggle('weather-strip-toggle--open', !nowHidden);
+      const nowOpen = !forecast.classList.contains('weather-forecast--open');
+      forecast.classList.toggle('weather-forecast--open', nowOpen);
+      toggle.setAttribute('aria-expanded', String(nowOpen));
+      toggle.classList.toggle('weather-strip-toggle--open', nowOpen);
     });
 
     container._groundedCleanup = () => {

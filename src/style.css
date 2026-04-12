@@ -5997,6 +5997,21 @@ body[data-mood="stretched"] { background: #f0f2f5; }
 .weather-strip-toggle:active { opacity: 0.5; }
 .weather-strip-toggle--open  { transform: rotate(180deg); }
 
+/* Animated expand/collapse using CSS grid trick */
+#weatherForecast {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#weatherForecast.weather-forecast--open {
+  grid-template-rows: 1fr;
+}
+
+#weatherForecast > .weather-strip-expanded {
+  overflow: hidden;
+}
+
 .weather-strip-expanded {
   margin-top: 10px;
   padding-top: 10px;
@@ -6248,13 +6263,31 @@ body[data-mood="stretched"] { background: #f0f2f5; }
   margin-bottom: 16px;
 }
 
+.canvas-habits-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
 .canvas-section-label {
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--color-ink-4);
-  margin-bottom: 14px;
+  margin-bottom: 0;
+}
+
+.canvas-habits-progress {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-ink-4);
+  transition: color 0.3s ease;
+}
+
+.canvas-habits-progress--done {
+  color: #22c55e;
 }
 
 .canvas-habit-pills {
@@ -6286,16 +6319,12 @@ body[data-mood="stretched"] { background: #f0f2f5; }
 .canvas-habit-pill:active { transform: scale(0.88); }
 
 .canvas-habit-pill--done {
-  background: var(--color-ink);
-  border-color: var(--color-ink);
-}
-
-.canvas-habit-pill--done .canvas-habit-pill-emoji {
-  filter: brightness(0) invert(1);
+  background: var(--habit-color, var(--color-ink-2));
+  border-color: transparent;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--habit-color, #666) 35%, transparent);
 }
 
 .canvas-habit-pill-emoji {
   font-size: 22px;
   line-height: 1;
-  transition: filter 0.2s ease;
 }
