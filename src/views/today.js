@@ -1,9 +1,9 @@
 import { saveTodayWellnessCheckin } from '../services/wellness.js';
 import { touchLastActive } from '../services/lastSeen.js';
-import { getTodayDisplay, showToast } from '../utils.js';
+import { getTodayDisplay, showToast, getTodayKey } from '../utils.js';
 import { fetchWeather } from '../services/weather.js';
 import { WEEKLY_SPLIT } from '../data/workouts.js';
-import { HABITS } from '../services/habits.js';
+import { HABITS, toggleHabit } from '../services/habits.js';
 import { navigateTo } from '../router.js';
 import { getDailyState } from '../domain/dailyState.js';
 import { Skeletons } from '../skeletons.js';
@@ -428,6 +428,33 @@ function renderHabitsTile(habitsState) {
   `;
 }
 
+// ─── Canvas habits ────────────────────────────────────────────────────────────
+// Emoji-only habit circles shown directly on Today so Cicely can tick habits
+// without navigating away. Replaces the habits entry tile in the card-stack.
+
+function renderCanvasHabits(habitsState) {
+  const items = habitsState?.items ?? [];
+  if (!items.length) return '';
+
+  return `
+    <section class="canvas-habits" id="canvasHabits">
+      <p class="canvas-section-label">Today's habits</p>
+      <div class="canvas-habit-pills">
+        ${items.map(h => `
+          <button
+            class="canvas-habit-pill${h.completed ? ' canvas-habit-pill--done' : ''}"
+            data-habit-id="${h.id}"
+            aria-label="${h.label}${h.completed ? ' — done' : ''}"
+            aria-pressed="${h.completed}"
+          >
+            <span class="canvas-habit-pill-emoji">${h.emoji || '●'}</span>
+          </button>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
 // ─── Render ───────────────────────────────────────────────────────────────────
 
 function renderReturnCard(returnMsg) {
@@ -468,12 +495,12 @@ function renderView(user, state, returnMsg, weather, recommendations, reminderDe
 </p>
 
         ${renderQuickCheckin(state.wellness.mood || '', state.wellness.energy || '')}
+        ${renderCanvasHabits(state.habits)}
         ${renderWeatherStrip(weather, hasBriefing)}
         ${renderPriorityActions(recommendations)}
 
         <div class="card-stack">
           ${renderWorkoutTile(state.workout, state)}
-          ${renderHabitsTile(state.habits)}
           ${renderPlanTile(state.wellness)}
         </div>
 
@@ -661,6 +688,64 @@ export const TodayView = {
       });
     }
 
+    // ── Canvas habits ────────────────────────────────────────────────────────
+
+    function syncRing() {
+      const ring = document.getElementById('todayRingFill');
+      if (!ring) return;
+      const total = viewState.habits?.totalCount ?? 0;
+      const done  = viewState.habits?.completedCount ?? 0;
+      ring.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - (total > 0 ? done / total : 0));
+    }
+
+    function rebuildCanvasHabits() {
+      const section = document.getElementById('canvasHabits');
+      if (!section) return;
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderCanvasHabits(viewState.habits);
+      const next = fresh.firstElementChild;
+      if (next) {
+        section.replaceWith(next);
+        bindCanvasHabits();
+      }
+    }
+
+    function bindCanvasHabits() {
+      document.querySelectorAll('.canvas-habit-pill').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const habitId = btn.dataset.habitId;
+          const wasDone = btn.classList.contains('canvas-habit-pill--done');
+          const habit   = viewState.habits?.items?.find(h => h.id === habitId);
+          if (!habit) return;
+
+          const newValue = !wasDone;
+          btn.classList.toggle('canvas-habit-pill--done', newValue);
+          btn.setAttribute('aria-pressed', String(newValue));
+          btn.setAttribute('aria-label', `${habit.label}${newValue ? ' — done' : ''}`);
+
+          // Optimistic update
+          habit.completed = newValue;
+          viewState.habits.completedCount = viewState.habits.items.filter(h => h.completed).length;
+          syncRing();
+          rebuildSummary();
+          rebuildPriorityActions();
+
+          try {
+            await toggleHabit(user.uid, getTodayKey(), habitId, newValue, { label: habit.label, emoji: habit.emoji });
+            window.dispatchEvent(new CustomEvent('grounded:habits-updated', { detail: { source: 'today-view' } }));
+          } catch {
+            // Revert on error
+            habit.completed = wasDone;
+            viewState.habits.completedCount = viewState.habits.items.filter(h => h.completed).length;
+            btn.classList.toggle('canvas-habit-pill--done', wasDone);
+            btn.setAttribute('aria-pressed', String(wasDone));
+            btn.setAttribute('aria-label', `${habit.label}${wasDone ? ' — done' : ''}`);
+            syncRing();
+          }
+        });
+      });
+    }
+
     // ── Weather briefing banner bindings ─────────────────────────────────────
     // bindWeatherBriefingBanner handles both the auto-shown banner and any
     // banner re-injected by the manual "View briefing" button. It is called
@@ -811,6 +896,8 @@ export const TodayView = {
         hideReminderBannerIfDone(mergedState);
 
         rebuildHabitsTile();
+        rebuildCanvasHabits();
+        syncRing();
         rebuildSummary();
         rebuildPriorityActions();
       } catch {
@@ -831,7 +918,7 @@ export const TodayView = {
       if (summary)         rebuildSummary();
       if (priorityActions) rebuildPriorityActions();
       if (workout)         rebuildWorkoutTile();
-      if (habits)          rebuildHabitsTile();
+      if (habits)          { rebuildHabitsTile(); rebuildCanvasHabits(); syncRing(); }
     }
 
     function collapseAndResolveQci() {
@@ -932,6 +1019,7 @@ export const TodayView = {
 
     bindPriorityActions();
     bindStaticTiles();
+    bindCanvasHabits();
     bindQci();
     bindReminderBanner();
     bindWeatherBriefingBanner();
