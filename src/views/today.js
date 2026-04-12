@@ -83,26 +83,18 @@ function uvBadgeClass(uv) {
   return 'weather-uv-badge';
 }
 
-// renderWeatherCard accepts hasBriefing — a boolean indicating whether a
-// valid briefing exists for this session. When true, a subtle "View briefing"
-// button is appended at the bottom of the card so the user can re-open the
-// briefing at any time, independent of whether the auto-banner is visible.
+// renderWeatherStrip — compact 1-line weather with expandable forecast.
+// Keeps id="weatherCard" so the briefing banner insertion still works.
 
-function renderWeatherCard(weather, hasBriefing) {
-  if (!weather) {
-    return `
-      <div class="weather-card" id="weatherCard">
-        <p class="card-label">Weather</p>
-        <p class="card-body mt-1" style="color:var(--color-ink-4);">Unavailable — check your connection.</p>
-      </div>
-    `;
-  }
+function renderWeatherStrip(weather, hasBriefing) {
+  if (!weather) return '';
 
   const { currentTemp, currentEmoji, currentDesc, currentUv, forecast, walkWindow, fromCache, cacheAgeMs } = weather;
-  const condClass = weatherConditionClass(currentDesc, currentEmoji);
+  const condClass = weatherConditionClass(currentDesc, currentEmoji)
+    .replace('weather-card--', 'weather-strip--');
 
   const staleNote = fromCache
-    ? `<p class="weather-stale-note">Offline — last updated ${Math.round(cacheAgeMs / 60000)} min ago</p>`
+    ? `<span class="weather-strip-stale">Offline</span>`
     : '';
 
   const forecastHtml = (forecast || []).map(d => `
@@ -113,30 +105,53 @@ function renderWeatherCard(weather, hasBriefing) {
     </div>
   `).join('');
 
-  // "View briefing" — present whenever a briefing exists for this session,
-  // regardless of whether the auto-banner has been dismissed.
   const viewBriefingBtn = hasBriefing
-    ? `<button class="weather-briefing-link" id="viewWeatherBriefingBtn" aria-label="View today&#39;s weather briefing">View briefing</button>`
+    ? `<button class="weather-briefing-link" id="viewWeatherBriefingBtn" aria-label="View today's weather briefing">View briefing</button>`
     : '';
 
   return `
-    <div class="weather-card ${condClass}" id="weatherCard">
-      <div class="weather-main">
-        <div class="weather-current">
-          <span class="weather-emoji">${currentEmoji}</span>
-          <div class="weather-temp-block">
-            <p class="weather-temp">${currentTemp}&deg;</p>
-            <p class="weather-desc">${currentDesc}</p>
-          </div>
+    <div class="weather-strip ${condClass}" id="weatherCard">
+      <div class="weather-strip-main">
+        <div class="weather-strip-left">
+          <span class="weather-strip-emoji">${currentEmoji}</span>
+          <span class="weather-strip-temp">${currentTemp}&deg;</span>
+          <span class="weather-strip-desc">${currentDesc}</span>
         </div>
-        <span class="${uvBadgeClass(currentUv)}">UV ${currentUv}</span>
+        <div class="weather-strip-right">
+          <span class="${uvBadgeClass(currentUv)}">UV ${currentUv}</span>
+          ${staleNote}
+          <button class="weather-strip-toggle" id="weatherForecastToggle" aria-expanded="false" aria-label="Show forecast">↓</button>
+        </div>
       </div>
-      ${walkWindow ? `<div class="weather-walk-window">${walkWindow}</div>` : ''}
-      <div class="weather-forecast" id="weatherForecast" hidden>${forecastHtml}</div>
-      <button class="weather-forecast-toggle" id="weatherForecastToggle" aria-expanded="false">Show forecast</button>
-      ${staleNote}
-      ${viewBriefingBtn}
+      <div id="weatherForecast" hidden>
+        <div class="weather-strip-expanded">
+          ${walkWindow ? `<p class="weather-strip-walk">${walkWindow}</p>` : ''}
+          <div class="weather-forecast">${forecastHtml}</div>
+          ${viewBriefingBtn}
+        </div>
+      </div>
     </div>
+  `;
+}
+
+// ─── Plan tile ────────────────────────────────────────────────────────────────
+
+function renderPlanTile(wellness) {
+  const hasCheckin = wellness?.mood && wellness?.energy;
+  const label = hasCheckin ? 'Plan my afternoon' : 'Find somewhere to go';
+  const sub = hasCheckin
+    ? 'Get a tailored suggestion based on how you\'re feeling.'
+    : 'Personalised activity suggestions for you and Nico.';
+
+  return `
+    <button class="plan-tile" id="planTileBtn" aria-label="Open activity planner">
+      <div class="plan-tile-left">
+        <p class="plan-tile-eyebrow">Activity planner</p>
+        <p class="plan-tile-label">${label}</p>
+        <p class="plan-tile-sub">${sub}</p>
+      </div>
+      <span class="workout-tile-arrow">→</span>
+    </button>
   `;
 }
 
@@ -413,6 +428,33 @@ function renderHabitsTile(habitsState) {
   `;
 }
 
+// ─── Canvas habits ────────────────────────────────────────────────────────────
+// Emoji-only habit circles shown directly on Today so Cicely can tick habits
+// without navigating away. Replaces the habits entry tile in the card-stack.
+
+function renderCanvasHabits(habitsState) {
+  const items = habitsState?.items ?? [];
+  if (!items.length) return '';
+
+  return `
+    <section class="canvas-habits" id="canvasHabits">
+      <p class="canvas-section-label">Today's habits</p>
+      <div class="canvas-habit-pills">
+        ${items.map(h => `
+          <button
+            class="canvas-habit-pill${h.completed ? ' canvas-habit-pill--done' : ''}"
+            data-habit-id="${h.id}"
+            aria-label="${h.label}${h.completed ? ' — done' : ''}"
+            aria-pressed="${h.completed}"
+          >
+            <span class="canvas-habit-pill-emoji">${h.emoji || '●'}</span>
+          </button>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
 // ─── Render ───────────────────────────────────────────────────────────────────
 
 function renderReturnCard(returnMsg) {
@@ -430,185 +472,12 @@ function renderReturnCard(returnMsg) {
   `;
 }
 
-// ─── Ritual ───────────────────────────────────────────────────────────────────
-
-function ritualGreetingHTML(firstName) {
-  return `
-    <div class="ritual-step">
-      <p class="ritual-eyebrow">Grounded</p>
-      <h1 class="ritual-title">${getGreeting(firstName)}</h1>
-      <p class="ritual-subtitle">${getTodayDisplay()}</p>
-      <button class="ritual-begin-btn" id="ritualBeginBtn">Begin</button>
-    </div>
-  `;
-}
-
-function ritualMoodHTML() {
-  return `
-    <div class="ritual-step">
-      <p class="ritual-progress">1 of 2</p>
-      <h2 class="ritual-question">How are you<br>feeling today?</h2>
-      <div class="ritual-options ritual-options--grid">
-        ${MOOD_OPTIONS.map(o => `
-          <button class="ritual-option" data-value="${o.value}">
-            <span class="ritual-option-emoji">${o.emoji}</span>
-            <span class="ritual-option-label">${o.label}</span>
-          </button>
-        `).join('')}
-      </div>
-    </div>
-  `;
-}
-
-function ritualEnergyHTML() {
-  return `
-    <div class="ritual-step">
-      <p class="ritual-progress">2 of 2</p>
-      <h2 class="ritual-question">How's your<br>energy?</h2>
-      <div class="ritual-options ritual-options--row">
-        ${ENERGY_OPTIONS.map(o => `
-          <button class="ritual-option" data-value="${o.value}">
-            <span class="ritual-option-emoji">${o.emoji}</span>
-            <span class="ritual-option-label">${o.label}</span>
-          </button>
-        `).join('')}
-      </div>
-    </div>
-  `;
-}
-
-function ritualDoneHTML(mood, habitsState, workoutStreak) {
-  const m = MOOD_OPTIONS.find(o => o.value === mood);
-  return `
-    <div class="ritual-step ritual-step--done">
-      <div class="ritual-done-ring">
-        ${renderHeroRing(habitsState, workoutStreak)}
-      </div>
-      <p class="ritual-done-headline">You're set.</p>
-      ${m ? `<p class="ritual-done-mood">${m.emoji} ${m.label}</p>` : ''}
-    </div>
-  `;
-}
-
-// showRitual renders a full-screen overlay and walks through greeting →
-// mood → energy → done. Calls onComplete({ mood, energy }) when finished,
-// then fades out so the canvas renders underneath.
-function showRitual(container, user, state, onComplete) {
-  const firstName = user.displayName?.split(' ')[0] || 'there';
-  const ws = { mood: '', energy: '' };
-
-  const overlay = document.createElement('div');
-  overlay.className = 'ritual-overlay';
-  overlay.id = 'ritualOverlay';
-  document.body.appendChild(overlay);
-
-  const nav = document.querySelector('.bottom-nav');
-  if (nav) { nav.style.opacity = '0'; nav.style.pointerEvents = 'none'; }
-
-  // Set early cleanup so the router can dismiss the overlay on navigation
-  container._groundedCleanup = () => {
-    overlay.remove();
-    if (nav) { nav.style.opacity = ''; nav.style.pointerEvents = ''; }
-  };
-
-  function step(html, bindFn) {
-    overlay.classList.add('ritual-overlay--out');
-    setTimeout(() => {
-      overlay.innerHTML = html;
-      overlay.classList.remove('ritual-overlay--out');
-      requestAnimationFrame(() => bindFn());
-    }, 180);
-  }
-
-  function goMood() {
-    step(ritualMoodHTML(), () => {
-      overlay.querySelectorAll('.ritual-option').forEach(btn => {
-        btn.addEventListener('click', () => {
-          ws.mood = btn.dataset.value;
-          document.body.dataset.mood = ws.mood;
-          overlay.querySelectorAll('.ritual-option').forEach(b =>
-            b.classList.toggle('ritual-option--selected', b === btn)
-          );
-          saveTodayWellnessCheckin(user.uid, ws).catch(() => {});
-          setTimeout(goEnergy, 320);
-        });
-      });
-    });
-  }
-
-  function goEnergy() {
-    step(ritualEnergyHTML(), () => {
-      overlay.querySelectorAll('.ritual-option').forEach(btn => {
-        btn.addEventListener('click', () => {
-          ws.energy = btn.dataset.value;
-          overlay.querySelectorAll('.ritual-option').forEach(b =>
-            b.classList.toggle('ritual-option--selected', b === btn)
-          );
-          saveTodayWellnessCheckin(user.uid, ws).catch(() => {});
-          setTimeout(goDone, 320);
-        });
-      });
-    });
-  }
-
-  function goDone() {
-    step(ritualDoneHTML(ws.mood, state.habits, state.workout?.streak ?? 0), () => {
-      // Animate ring
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        const ring = overlay.querySelector('#todayRingFill');
-        if (ring) {
-          const total = state.habits?.totalCount ?? 0;
-          const done  = state.habits?.completedCount ?? 0;
-          ring.style.strokeDashoffset = RING_CIRCUMFERENCE * (1 - (total > 0 ? done / total : 0));
-        }
-      }));
-
-      // Canvas renders underneath while overlay fades
-      setTimeout(() => {
-        onComplete({ mood: ws.mood, energy: ws.energy });
-        overlay.classList.add('ritual-overlay--exiting');
-        if (nav) { nav.style.opacity = ''; nav.style.pointerEvents = ''; }
-        setTimeout(() => { overlay.remove(); container._groundedCleanup = null; }, 400);
-      }, 1600);
-    });
-  }
-
-  // Step 0: greeting
-  overlay.innerHTML = ritualGreetingHTML(firstName);
-  overlay.querySelector('#ritualBeginBtn')?.addEventListener('click', goMood);
-}
-
-// ─── Canvas habits ────────────────────────────────────────────────────────────
-
-function renderCanvasHabits(habitsState) {
-  const items = habitsState?.items ?? [];
-  if (!items.length) return '';
-
-  return `
-    <section class="canvas-habits" id="canvasHabits">
-      <p class="canvas-section-label">Today's habits</p>
-      <div class="canvas-habit-pills">
-        ${items.map(h => `
-          <button
-            class="canvas-habit-pill${h.completed ? ' canvas-habit-pill--done' : ''}"
-            data-habit-id="${h.id}"
-            aria-label="${h.name}${h.completed ? ' — done' : ''}"
-            aria-pressed="${h.completed}"
-          >
-            <span class="canvas-habit-pill-emoji">${h.emoji || '●'}</span>
-          </button>
-        `).join('')}
-      </div>
-    </section>
-  `;
-}
-
-function renderView(user, state, returnMsg, weather, recommendations, reminderDecision, weatherBriefing, hasBriefing, canvasMode = false) {
+function renderView(user, state, returnMsg, weather, recommendations, reminderDecision, weatherBriefing, hasBriefing) {
   const firstName = user.displayName?.split(' ')[0] || 'there';
   const workoutStreak = state.workout?.streak ?? 0;
 
   return `
-    <main class="view-scroll"${canvasMode ? ' data-mode="canvas"' : ''}>
+    <main class="view-scroll">
       <div class="view-inner">
 
 <header class="today-hero">
@@ -625,19 +494,19 @@ function renderView(user, state, returnMsg, weather, recommendations, reminderDe
   ${getTodaySummary(state)}
 </p>
 
-        ${renderReturnCard(returnMsg)}
-        ${renderWeatherBriefingBanner(weatherBriefing)}
-        ${renderReminderBanner(reminderDecision)}
-        ${renderPriorityActions(recommendations)}
-        ${renderWeatherCard(weather, hasBriefing)}
         ${renderQuickCheckin(state.wellness.mood || '', state.wellness.energy || '')}
-
-        ${canvasMode ? renderCanvasHabits(state.habits) : ''}
+        ${renderCanvasHabits(state.habits)}
+        ${renderWeatherStrip(weather, hasBriefing)}
+        ${renderPriorityActions(recommendations)}
 
         <div class="card-stack">
           ${renderWorkoutTile(state.workout, state)}
-          ${canvasMode ? '' : renderHabitsTile(state.habits)}
+          ${renderPlanTile(state.wellness)}
         </div>
+
+        ${renderReturnCard(returnMsg)}
+        ${renderWeatherBriefingBanner(weatherBriefing)}
+        ${renderReminderBanner(reminderDecision)}
 
         <p id="wellnessStatus" class="status-text mt-4 px-1"></p>
 
@@ -708,18 +577,6 @@ export const TodayView = {
 
     const returnMsg = _returnDismissed ? null : getReturnMessage(state.lastSeen?.gapHours ?? 0);
 
-    // ── Ritual — show once per day when check-in hasn't been done ─────────────
-    if (!state.wellness.mood) {
-      container.innerHTML = '';
-      await new Promise(resolve => {
-        showRitual(container, user, state, ({ mood, energy }) => {
-          state.wellness.mood   = mood;
-          state.wellness.energy = energy;
-          resolve();
-        });
-      });
-    }
-
     const viewState = {
       ...state,
       wellness: { ...state.wellness },
@@ -739,7 +596,6 @@ export const TodayView = {
       reminderDecision,
       autoShowBriefing,
       !!_sessionWeatherBriefing,
-      true, // canvasMode — always on
     );
 
     // ── Mood ambient tint — restore from saved state on every load ───────────
@@ -817,7 +673,22 @@ export const TodayView = {
       document.getElementById('habitsTileBtn')?.addEventListener('click', () => {
         navigateTo('habits');
       });
+
+      document.getElementById('planTileBtn')?.addEventListener('click', () => {
+        // Pre-fill plan context from today's check-in so the plan flow can skip
+        // the "How are you feeling?" step — it's already been answered.
+        const mood   = viewState.wellness?.mood;
+        const energy = viewState.wellness?.energy;
+        if (mood || energy) {
+          let planEnergy = 'good';
+          if (energy === 'low' || mood === 'stretched') planEnergy = 'low';
+          window._groundedPlanQuickContext = { parentEnergy: planEnergy };
+        }
+        navigateTo('today-plans');
+      });
     }
+
+    // ── Canvas habits ────────────────────────────────────────────────────────
 
     function syncRing() {
       const ring = document.getElementById('todayRingFill');
@@ -850,6 +721,7 @@ export const TodayView = {
           const newValue = !wasDone;
           btn.classList.toggle('canvas-habit-pill--done', newValue);
           btn.setAttribute('aria-pressed', String(newValue));
+          btn.setAttribute('aria-label', `${habit.label}${newValue ? ' — done' : ''}`);
 
           // Optimistic update
           habit.completed = newValue;
@@ -859,7 +731,7 @@ export const TodayView = {
           rebuildPriorityActions();
 
           try {
-            await toggleHabit(user.uid, getTodayKey(), habitId, newValue, { name: habit.name, emoji: habit.emoji });
+            await toggleHabit(user.uid, getTodayKey(), habitId, newValue, { label: habit.label, emoji: habit.emoji });
             window.dispatchEvent(new CustomEvent('grounded:habits-updated', { detail: { source: 'today-view' } }));
           } catch {
             // Revert on error
@@ -867,6 +739,7 @@ export const TodayView = {
             viewState.habits.completedCount = viewState.habits.items.filter(h => h.completed).length;
             btn.classList.toggle('canvas-habit-pill--done', wasDone);
             btn.setAttribute('aria-pressed', String(wasDone));
+            btn.setAttribute('aria-label', `${habit.label}${wasDone ? ' — done' : ''}`);
             syncRing();
           }
         });
@@ -1045,7 +918,7 @@ export const TodayView = {
       if (summary)         rebuildSummary();
       if (priorityActions) rebuildPriorityActions();
       if (workout)         rebuildWorkoutTile();
-      if (habits)          rebuildHabitsTile();
+      if (habits)          { rebuildHabitsTile(); rebuildCanvasHabits(); syncRing(); }
     }
 
     function collapseAndResolveQci() {
@@ -1158,15 +1031,12 @@ export const TodayView = {
       if (!forecast || !toggle) return;
       const nowHidden = !forecast.hidden;
       forecast.hidden = nowHidden;
-      toggle.textContent = nowHidden ? 'Show forecast' : 'Hide forecast';
       toggle.setAttribute('aria-expanded', String(!nowHidden));
+      toggle.classList.toggle('weather-strip-toggle--open', !nowHidden);
     });
 
     container._groundedCleanup = () => {
       window.removeEventListener('grounded:habits-updated', handleHabitsUpdated);
-      document.getElementById('ritualOverlay')?.remove();
-      const navEl = document.querySelector('.bottom-nav');
-      if (navEl) { navEl.style.opacity = ''; navEl.style.pointerEvents = ''; }
     };
   }
 };

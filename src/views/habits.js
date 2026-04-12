@@ -55,14 +55,14 @@ function emitHabitsUpdated(detail = {}) {
   }));
 }
 
-// ─── Render: habit toggle pills ───────────────────────────────────────────────
+// ─── Render: habit circle grid ────────────────────────────────────────────────
 
-function renderHabitPills(habits, activeDate, isToday, habitDefs) {
+function renderHabitCircles(habits, activeDate, isToday, habitDefs, streaks) {
   const dateLabel = isToday ? 'Today' : formatShortDate(activeDate);
 
   if (habitDefs.length === 0) {
     return `
-      <div class="habits-pills-section" id="habitsPillsSection">
+      <div class="habits-circles-section" id="habitsPillsSection">
         <div class="habits-empty-state">
           <p class="habits-empty-icon">🌱</p>
           <p class="habits-empty-title">No habits yet</p>
@@ -73,25 +73,35 @@ function renderHabitPills(habits, activeDate, isToday, habitDefs) {
   }
 
   return `
-    <div class="habits-pills-section" id="habitsPillsSection">
-      <div class="habits-pills-header">
-        <p class="habits-pills-date">${dateLabel}</p>
-        ${!isToday ? '<p class="habits-pills-hint">Logging a past day</p>' : ''}
+    <div class="habits-circles-section" id="habitsPillsSection">
+      <div class="habits-circles-header">
+        <p class="habits-circles-date">${dateLabel}</p>
+        ${!isToday ? '<p class="habits-circles-hint">Logging a past day</p>' : ''}
       </div>
-      <div class="habits-pills-list">
+      <div class="habits-circles-grid">
         ${habitDefs.map((h, i) => {
           const done = isHabitDone(habits, h.id);
+          const streak = (streaks || {})[h.id] || 0;
           return `
             <button
-              class="habit-pill${done ? ' habit-pill--done' : ''}"
+              class="habit-circle-item${done ? ' habit-circle-item--done' : ''}"
               data-habit-id="${h.id}"
               style="--habit-color: ${h.color}; animation-delay: ${i * 55}ms"
               aria-pressed="${done}"
-              aria-label="${h.label}"
+              aria-label="${h.label}${streak > 0 ? `, ${streak} day streak` : ''}"
             >
-              <span class="habit-pill-emoji">${h.emoji}</span>
-              <span class="habit-pill-label">${h.label}</span>
-              <span class="habit-pill-check" aria-hidden="true">${done ? '✓' : ''}</span>
+              ${streak > 0
+                ? `<span class="habit-streak-chip habit-streak-chip--active" data-streak-chip-id="${h.id}">🔥 ${streak}</span>`
+                : `<span class="habit-streak-chip" data-streak-chip-id="${h.id}"></span>`}
+              <div class="habit-circle-svg-wrap">
+                <svg class="habit-circle-svg" viewBox="0 0 80 80" aria-hidden="true">
+                  <circle class="habit-circle-bg" cx="40" cy="40" r="36"/>
+                  <circle class="habit-circle-fill" cx="40" cy="40" r="36"
+                    style="stroke-dashoffset: ${done ? 0 : 226.19}"/>
+                </svg>
+                <span class="habit-circle-emoji" aria-hidden="true">${h.emoji}</span>
+              </div>
+              <span class="habit-circle-label">${h.label}</span>
             </button>
           `;
         }).join('')}
@@ -345,7 +355,7 @@ function renderView(habits, logsMap, streaks, calendarDays, activeDate, todayKey
         ${isEditing
           ? renderEditSection(allHabits, editingHabitId)
           : `
-            ${renderHabitPills(habits, activeDate, activeDate === todayKey, habitDefs)}
+            ${renderHabitCircles(habits, activeDate, activeDate === todayKey, habitDefs, streaks)}
             ${habitDefs.length > 0 ? renderCalendar(calendarDays, logsMap, activeDate, habitDefs) : ''}
             ${habitDefs.length > 0 ? renderStreaks(streaks, habitDefs) : ''}
           `
@@ -357,21 +367,41 @@ function renderView(habits, logsMap, streaks, calendarDays, activeDate, todayKey
 
 // ─── Surgical DOM updaters ─────────────────────────────────────────────────────
 
-function patchPill(habitId, done) {
+function patchCircle(habitId, done) {
   const btn = document.querySelector(`[data-habit-id="${habitId}"]`);
   if (!btn) return;
-  btn.classList.toggle('habit-pill--done', done);
+  btn.classList.toggle('habit-circle-item--done', done);
   btn.setAttribute('aria-pressed', String(done));
-  const check = btn.querySelector('.habit-pill-check');
-  if (check) check.textContent = done ? '✓' : '';
 
-  // Bounce animation when marking done
+  // Update the SVG fill offset directly so it animates smoothly
+  const fill = btn.querySelector('.habit-circle-fill');
+  if (fill) fill.style.strokeDashoffset = done ? 0 : 226.19;
+
+  // Pop animation on completion
   if (done) {
-    btn.classList.remove('habit-pill--popping');
-    // Force reflow so animation replays even if triggered twice quickly
+    btn.classList.remove('habit-circle-item--popping');
     void btn.offsetWidth;
-    btn.classList.add('habit-pill--popping');
-    setTimeout(() => btn.classList.remove('habit-pill--popping'), 400);
+    btn.classList.add('habit-circle-item--popping');
+    setTimeout(() => btn.classList.remove('habit-circle-item--popping'), 420);
+  }
+}
+
+function patchStreakChip(habitId, streak) {
+  const chip = document.querySelector(`[data-streak-chip-id="${habitId}"]`);
+  if (!chip) return;
+  if (streak > 0) {
+    chip.textContent = `🔥 ${streak}`;
+    chip.classList.add('habit-streak-chip--active');
+  } else {
+    chip.textContent = '';
+    chip.classList.remove('habit-streak-chip--active');
+  }
+
+  // Update aria-label on the parent button to reflect new streak
+  const btn = chip.closest('[data-habit-id]');
+  if (btn) {
+    const label = btn.getAttribute('aria-label')?.replace(/, \d+ day streak$/, '') || '';
+    btn.setAttribute('aria-label', streak > 0 ? `${label}, ${streak} day streak` : label);
   }
 }
 
@@ -409,11 +439,11 @@ function patchStreak(habitId, streak) {
     : `<span class="streak-zero">—</span>`;
 }
 
-function rebuildPillsSection(habits, activeDate, todayKey, habitDefs) {
+function rebuildCirclesSection(habits, activeDate, todayKey, habitDefs, streaks) {
   const section = document.getElementById('habitsPillsSection');
   if (!section) return;
   const fresh = document.createElement('div');
-  fresh.innerHTML = renderHabitPills(habits, activeDate, activeDate === todayKey, habitDefs);
+  fresh.innerHTML = renderHabitCircles(habits, activeDate, activeDate === todayKey, habitDefs, streaks);
   section.replaceWith(fresh.firstElementChild);
 }
 
@@ -851,7 +881,7 @@ export const HabitsView = {
           const prevStreaks = { ...currentStreaks };
           currentStreaks = computeStreaks(currentLogs, todayKey, habitDefs);
 
-          patchPill(habitId, newVal);
+          patchCircle(habitId, newVal);
           patchCalDot(activeDate, currentLogs, habitDefs);
 
           // All-done celebration when every habit is ticked for today
@@ -860,10 +890,10 @@ export const HabitsView = {
             if (doneCount === habitDefs.length && habitDefs.length > 0) {
               const section = document.getElementById('habitsPillsSection');
               if (section) {
-                section.classList.remove('habits-pills-section--celebrating');
+                section.classList.remove('habits-circles-section--celebrating');
                 void section.offsetWidth;
-                section.classList.add('habits-pills-section--celebrating');
-                setTimeout(() => section.classList.remove('habits-pills-section--celebrating'), 800);
+                section.classList.add('habits-circles-section--celebrating');
+                setTimeout(() => section.classList.remove('habits-circles-section--celebrating'), 800);
               }
             }
           }
@@ -876,6 +906,8 @@ export const HabitsView = {
           } else {
             patchStreak(habitId, currentStreaks[habitId] || 0);
           }
+          // Always sync the inline streak chip in the circle
+          patchStreakChip(habitId, currentStreaks[habitId] || 0);
 
           try {
             await toggleHabit(
@@ -915,9 +947,10 @@ export const HabitsView = {
             };
 
             currentStreaks = computeStreaks(currentLogs, todayKey, habitDefs);
-            patchPill(habitId, current);
+            patchCircle(habitId, current);
             patchCalDot(activeDate, currentLogs, habitDefs);
             rebuildStreaksSection(currentStreaks, habitDefs);
+            patchStreakChip(habitId, currentStreaks[habitId] || 0);
             showToast('Save failed — try again', 'error');
           }
         });
@@ -946,7 +979,7 @@ export const HabitsView = {
 
           activeHabits = { ...(currentLogs[dateKey] || {}) };
 
-          rebuildPillsSection(activeHabits, activeDate, todayKey, habitDefs);
+          rebuildCirclesSection(activeHabits, activeDate, todayKey, habitDefs, currentStreaks);
           bindPillEvents();
 
           setTimeout(() => {
