@@ -31,19 +31,28 @@ function dateKey(offsetDays = 0) {
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 
-function writeCache(data) {
+// Returns approximate distance in degrees (lat/lng) — good enough for cache
+// invalidation. 0.2° ≈ ~22 km; we bust the cache if the user has moved that far.
+function locationMoved(cachedLat, cachedLng, lat, lng) {
+  if (cachedLat == null || cachedLng == null) return false;
+  return Math.abs(cachedLat - lat) > 0.2 || Math.abs(cachedLng - lng) > 0.2;
+}
+
+function writeCache(data, lat, lng) {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), lat, lng, data }));
   } catch {
     // storage full or unavailable — silently skip
   }
 }
 
-function readCache() {
+function readCache(lat, lng) {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
-    const { ts, data } = JSON.parse(raw);
+    const { ts, lat: cachedLat, lng: cachedLng, data } = JSON.parse(raw);
+    // Bust cache if the user has moved significantly
+    if (lat != null && lng != null && locationMoved(cachedLat, cachedLng, lat, lng)) return null;
     return { data, ageMs: Date.now() - ts, stale: Date.now() - ts > CACHE_TTL_MS };
   } catch {
     return null;
@@ -145,11 +154,18 @@ function describeWeatherCode(code) {
 // ─── Main fetch ───────────────────────────────────────────────────────────────
 
 export async function fetchWeather(lat = DEFAULT_LAT, lng = DEFAULT_LNG) {
-  // Try cache first if still fresh
-  const cached = readCache();
+  // Normalise nulls to defaults so the API always gets valid coords
+  const resolvedLat = lat ?? DEFAULT_LAT;
+  const resolvedLng = lng ?? DEFAULT_LNG;
+
+  // Try cache first if still fresh (busted if user has moved significantly)
+  const cached = readCache(resolvedLat, resolvedLng);
   if (cached && !cached.stale) {
     return { ...cached.data, fromCache: false };
   }
+
+  lat = resolvedLat;
+  lng = resolvedLng;
 
   const url = [
     'https://api.open-meteo.com/v1/forecast',
@@ -207,7 +223,7 @@ export async function fetchWeather(lat = DEFAULT_LAT, lng = DEFAULT_LNG) {
       fetchedAt:    new Date().toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
     };
 
-    writeCache(data);
+    writeCache(data, lat, lng);
 
     // Write today's snapshot so tomorrow's briefing can compare.
     writeDaySnapshot(dateKey(0), {

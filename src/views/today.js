@@ -530,11 +530,22 @@ export const TodayView = {
   async init(container, user) {
     container.innerHTML = Skeletons.today();
 
-    const [state, weather, notifData] = await Promise.all([
+    const geoPromise = new Promise(resolve => {
+      if (!navigator.geolocation) { resolve(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        () => resolve(null),
+        { timeout: 8000, maximumAge: 300_000 }
+      );
+    });
+
+    const [state, geo, notifData] = await Promise.all([
       getDailyState(user.uid),
-      fetchWeather().catch(() => null),
+      geoPromise,
       loadNotificationData(user.uid).catch(() => ({ prefs: null, notifState: null })),
     ]);
+
+    const weather = await fetchWeather(geo?.lat, geo?.lng).catch(() => null);
 
     // Record app opened. Fire-and-forget — never blocks the render.
     recordAppOpened(user.uid).catch(() => {});

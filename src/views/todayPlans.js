@@ -650,9 +650,10 @@ export const TodayPlansView = {
       const { doc, getDoc } = await import('firebase/firestore');
       const { fetchWeather } = await import('../services/weather.js');
 
+      const geo = await getGeolocation();
       const [snap, weather] = await Promise.all([
         getDoc(doc(db, 'users', user.uid)),
-        fetchWeather().catch(() => null),
+        fetchWeather(geo?.lat, geo?.lng).catch(() => null),
       ]);
 
       profile     = snap.exists() ? snap.data() : null;
