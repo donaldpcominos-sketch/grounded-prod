@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npm run:*)",
       "WebSearch",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(grep -r \"DEFAULT_LAT\\\\|DEFAULT_LNG\\\\|-33.8354\\\\|150.9836\" . --include=\"*.js\" ! -path \"*/node_modules/*\" ! -path \"*/dist/*\")"
     ]
   }
 }
